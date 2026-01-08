@@ -1,0 +1,259 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Import Inter font */
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+@layer base {
+  :root {
+    /* Colors - matching Figma exactly */
+    --color-primary: #2563EB;
+    --color-primary-hover: #1D4ED8;
+    --color-primary-light: #DBEAFE;
+
+    --color-white: #FFFFFF;
+    --color-background: #F9FAFB;
+
+    --color-gray-50: #F9FAFB;
+    --color-gray-100: #F3F4F6;
+    --color-gray-200: #E5E7EB;
+    --color-gray-300: #D1D5DB;
+    --color-gray-400: #9CA3AF;
+    --color-gray-500: #6B7280;
+    --color-gray-600: #4B5563;
+    --color-gray-700: #374151;
+    --color-gray-800: #1F2937;
+    --color-gray-900: #111827;
+
+    --color-success: #10B981;
+    --color-warning: #F59E0B;
+    --color-error: #EF4444;
+
+    /* Gender slider gradient */
+    --gradient-gender: linear-gradient(90deg, #3B82F6 0%, #8B5CF6 50%, #EC4899 100%);
+
+    /* Spacing */
+    --sidebar-width: 240px;
+    --sidebar-collapsed-width: 64px;
+    --header-height: 64px;
+
+    /* Shadows */
+    --shadow-card: 0 1px 3px rgba(0, 0, 0, 0.08);
+    --shadow-card-hover: 0 4px 12px rgba(0, 0, 0, 0.1);
+
+    /* Border radius */
+    --radius-sm: 4px;
+    --radius-md: 6px;
+    --radius-lg: 8px;
+    --radius-xl: 12px;
+  }
+
+  * {
+    box-sizing: border-box;
+    padding: 0;
+    margin: 0;
+  }
+
+  html,
+  body {
+    max-width: 100vw;
+    overflow-x: hidden;
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background-color: var(--color-gray-50);
+    color: var(--color-gray-900);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /* Custom scrollbar */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--color-gray-100);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-gray-300);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--color-gray-400);
+  }
+}
+
+@layer components {
+  /* Card base style - matching Figma project cards */
+  .card {
+    @apply bg-white rounded-lg border border-gray-200 p-5;
+    box-shadow: var(--shadow-card);
+  }
+
+  .card:hover {
+    box-shadow: var(--shadow-card-hover);
+    border-color: var(--color-gray-300);
+  }
+
+  /* Pill/chip button style - matching Figma audience form */
+  .pill {
+    @apply inline-flex items-center justify-center px-4 py-2 rounded-md text-sm font-medium;
+    @apply border border-gray-300 bg-white text-gray-700;
+    @apply hover:bg-gray-50 transition-colors cursor-pointer;
+  }
+
+  .pill-selected {
+    @apply bg-primary-600 text-white border-primary-600;
+    @apply hover:bg-primary-700;
+  }
+
+  /* Table styles - matching Figma audience profiles table */
+  .data-table {
+    @apply w-full;
+  }
+
+  .data-table th {
+    @apply px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider;
+    @apply bg-gray-50 border-b border-gray-200;
+  }
+
+  .data-table td {
+    @apply px-4 py-4 text-sm text-gray-900;
+    @apply border-b border-gray-200;
+  }
+
+  .data-table tr:hover td {
+    @apply bg-gray-50;
+  }
+
+  /* Progress bar - matching Figma project cards */
+  .progress-bar {
+    @apply h-2 bg-gray-200 rounded-full overflow-hidden;
+  }
+
+  .progress-bar-fill {
+    @apply h-full bg-primary-600 rounded-full transition-all duration-300;
+  }
+
+  /* Badge styles - matching Figma */
+  .badge {
+    @apply inline-flex items-center px-2 py-0.5 rounded text-xs font-medium;
+  }
+
+  .badge-gray {
+    @apply bg-gray-100 text-gray-700;
+  }
+
+  .badge-blue {
+    @apply bg-primary-100 text-primary-700;
+  }
+
+  .badge-green {
+    @apply bg-success-50 text-success-600;
+  }
+
+  .badge-yellow {
+    @apply bg-warning-50 text-warning-600;
+  }
+
+  .badge-outline {
+    @apply bg-transparent border border-current;
+  }
+
+  /* Panel styles - matching Figma survey builder */
+  .panel {
+    @apply bg-white rounded-lg border border-gray-200 flex flex-col;
+    min-width: 320px;
+  }
+
+  .panel-header {
+    @apply px-5 py-4 border-b border-gray-200;
+  }
+
+  .panel-header-title {
+    @apply text-base font-semibold text-gray-900;
+  }
+
+  .panel-header-subtitle {
+    @apply text-sm text-gray-500 mt-0.5;
+  }
+
+  .panel-content {
+    @apply flex-1 p-5 overflow-auto;
+  }
+
+  /* Empty state - matching Figma */
+  .empty-state {
+    @apply flex flex-col items-center justify-center text-center py-12 px-4;
+  }
+
+  .empty-state-icon {
+    @apply w-12 h-12 text-gray-300 mb-4;
+  }
+
+  .empty-state-title {
+    @apply text-base font-medium text-gray-900 mb-2;
+  }
+
+  .empty-state-description {
+    @apply text-sm text-gray-500 max-w-sm;
+  }
+
+  /* AI Suggestion banner - matching Figma */
+  .ai-suggestion {
+    @apply rounded-lg p-4 mb-4;
+    background-color: #EFF6FF;
+    border: 1px solid #BFDBFE;
+  }
+
+  /* Bias warning banner - matching Figma */
+  .bias-warning {
+    @apply rounded-lg p-4 mb-4;
+    background-color: #FFFBEB;
+    border: 1px solid #FCD34D;
+  }
+
+  /* Form input styles - matching Figma */
+  .form-input {
+    @apply w-full px-3 py-2 text-sm rounded-md border border-gray-300;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500;
+    @apply placeholder:text-gray-400;
+  }
+
+  .form-textarea {
+    @apply w-full px-3 py-2 text-sm rounded-md border border-gray-300;
+    @apply focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-primary-500;
+    @apply placeholder:text-gray-400 resize-none;
+  }
+
+  .form-label {
+    @apply block text-sm font-medium text-gray-700 mb-1.5;
+  }
+
+  /* Gender ratio slider - custom gradient */
+  .gender-slider {
+    @apply w-full h-2 rounded-full appearance-none cursor-pointer;
+    background: var(--gradient-gender);
+  }
+
+  .gender-slider::-webkit-slider-thumb {
+    @apply appearance-none w-4 h-4 rounded-full bg-white border-2 border-primary-600;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+  }
+}
+
+@layer utilities {
+  /* Custom utilities */
+  .text-balance {
+    text-wrap: balance;
+  }
+
+  /* Prediction bar widths */
+  .prediction-bar {
+    @apply h-2 rounded-full transition-all duration-500;
+    background-color: var(--color-primary);
+  }
+}
