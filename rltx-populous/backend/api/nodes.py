@@ -171,24 +171,18 @@ Return as JSON only."""
         except Exception as e:
             print(f"[MarketScanner] Exa error: {e}")
 
-    # Fallback estimates based on sector
-    SECTOR_DEFAULTS = {
-        "ai": {"sentiment": 0.85, "phase": "growth", "trends": ["LLMs", "AI agents", "Enterprise AI"]},
-        "developer tools": {"sentiment": 0.75, "phase": "growth", "trends": ["AI-assisted coding", "DevOps automation"]},
-        "fintech": {"sentiment": 0.60, "phase": "mature", "trends": ["Embedded finance", "B2B payments"]},
-        "healthcare": {"sentiment": 0.70, "phase": "emerging", "trends": ["AI diagnostics", "Telehealth"]},
-    }
+    # Require real data - no fallbacks
+    if not exa or not llm:
+        raise HTTPException(
+            status_code=503,
+            detail="EXA_API_KEY and ANTHROPIC_API_KEY required for market intelligence. Cannot proceed without real data."
+        )
 
-    sector_lower = request.sector.lower()
-    for key, defaults in SECTOR_DEFAULTS.items():
-        if key in sector_lower:
-            if output["sentiment_score"] == 0.5:
-                output["sentiment_score"] = defaults["sentiment"]
-            if not output["key_trends"]:
-                output["key_trends"] = defaults["trends"]
-            if output["market_cycle_phase"] == "growth":
-                output["market_cycle_phase"] = defaults["phase"]
-            break
+    if output["sentiment_score"] == 0.5 and not output["recent_deals"]:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Could not find market data for sector: {request.sector}. Please verify sector name."
+        )
 
     elapsed = (datetime.now() - start).total_seconds() * 1000
 
@@ -211,10 +205,18 @@ class AlternativeDataInput(BaseModel):
 async def alternative_data(request: AlternativeDataInput) -> NodeResponse:
     """
     Non-traditional signals: GitHub, job postings, social
+    Requires EXA_API_KEY and ANTHROPIC_API_KEY for real data
     """
     start = datetime.now()
     exa = get_exa()
     llm = get_llm()
+
+    # Require APIs for production
+    if not exa or not llm:
+        raise HTTPException(
+            status_code=503,
+            detail="EXA_API_KEY and ANTHROPIC_API_KEY required for alternative data signals. Cannot proceed without real data."
+        )
 
     output = {
         "github": {
@@ -242,33 +244,32 @@ async def alternative_data(request: AlternativeDataInput) -> NodeResponse:
         }
     }
 
-    if exa:
-        try:
-            # GitHub search
-            if "github" in request.signals:
-                gh_query = f"site:github.com {request.company_name}"
-                gh_results = exa.search_and_contents(query=gh_query, num_results=5, text=True)
+    try:
+        # GitHub search
+        if "github" in request.signals:
+            gh_query = f"site:github.com {request.company_name}"
+            gh_results = exa.search_and_contents(query=gh_query, num_results=5, text=True)
 
-                if gh_results.results:
-                    # Estimate stars from mentions
-                    text = " ".join([(r.text or "") for r in gh_results.results])
-                    star_mentions = text.lower().count("star")
-                    output["github"]["total_stars"] = max(100, star_mentions * 50)
-                    output["github"]["repos"] = len(gh_results.results)
+            if gh_results.results:
+                # Estimate stars from mentions
+                text = " ".join([(r.text or "") for r in gh_results.results])
+                star_mentions = text.lower().count("star")
+                output["github"]["total_stars"] = max(100, star_mentions * 50)
+                output["github"]["repos"] = len(gh_results.results)
 
-            # Job postings search
-            if "jobs" in request.signals:
-                jobs_query = f"{request.company_name} careers jobs hiring"
-                jobs_results = exa.search_and_contents(query=jobs_query, num_results=10, text=True)
+        # Job postings search
+        if "jobs" in request.signals:
+            jobs_query = f"{request.company_name} careers jobs hiring"
+            jobs_results = exa.search_and_contents(query=jobs_query, num_results=10, text=True)
 
-                if jobs_results.results and llm:
-                    context = "\n".join([(r.text or "")[:300] for r in jobs_results.results[:5]])
-                    response = llm.messages.create(
-                        model="claude-sonnet-4-20250514",
-                        max_tokens=200,
-                        messages=[{
-                            "role": "user",
-                            "content": f"""From these job postings for {request.company_name}, estimate:
+            if jobs_results.results:
+                context = "\n".join([(r.text or "")[:300] for r in jobs_results.results[:5]])
+                response = llm.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=200,
+                    messages=[{
+                        "role": "user",
+                        "content": f"""From these job postings for {request.company_name}, estimate:
 1. Total open positions (number)
 2. Engineering roles (number)
 3. Sales/growth roles (number)
@@ -277,38 +278,76 @@ async def alternative_data(request: AlternativeDataInput) -> NodeResponse:
 {context}
 
 Return JSON only: {{"positions": N, "engineering": N, "growth": N, "velocity": "..."}}"""
-                        }]
-                    )
-                    try:
-                        import json
-                        text = response.content[0].text
-                        if "{" in text:
-                            parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
-                            output["jobs"] = {
-                                "open_positions": parsed.get("positions", 0),
-                                "engineering_roles": parsed.get("engineering", 0),
-                                "growth_roles": parsed.get("growth", 0),
-                                "hiring_velocity": parsed.get("velocity", "unknown")
-                            }
-                    except:
-                        pass
+                    }]
+                )
+                import json
+                text = response.content[0].text
+                if "{" in text:
+                    parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
+                    output["jobs"] = {
+                        "open_positions": parsed.get("positions", 0),
+                        "engineering_roles": parsed.get("engineering", 0),
+                        "growth_roles": parsed.get("growth", 0),
+                        "hiring_velocity": parsed.get("velocity", "unknown")
+                    }
 
-            # Social/news search
-            if "social" in request.signals:
-                social_query = f"{request.company_name} twitter linkedin followers"
-                social_results = exa.search_and_contents(query=social_query, num_results=5, text=True)
+        # Social/news search
+        if "social" in request.signals:
+            social_query = f"{request.company_name} twitter linkedin followers company profile"
+            social_results = exa.search_and_contents(query=social_query, num_results=5, text=True)
 
-                # Estimate based on company stage
-                output["social"]["twitter_followers"] = random.randint(1000, 10000)
-                output["social"]["linkedin_followers"] = random.randint(500, 5000)
-                output["social"]["mention_sentiment"] = 0.65 + random.random() * 0.2
+            if social_results.results:
+                social_context = "\n".join([(r.text or "")[:300] for r in social_results.results[:3]])
+                social_response = llm.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=200,
+                    messages=[{
+                        "role": "user",
+                        "content": f"""From social media data for {request.company_name}:
+{social_context}
+Extract JSON: {{"twitter_followers": number, "linkedin_followers": number, "sentiment": 0.0-1.0, "web_traffic": monthly_visits}}
+Estimate based on company stage if exact numbers not found."""
+                    }]
+                )
+                import json
+                social_text = social_response.content[0].text
+                if "{" in social_text:
+                    social_parsed = json.loads(social_text[social_text.find("{"):social_text.rfind("}")+1])
+                    output["social"]["twitter_followers"] = social_parsed.get("twitter_followers", 0)
+                    output["social"]["linkedin_followers"] = social_parsed.get("linkedin_followers", 0)
+                    output["social"]["mention_sentiment"] = social_parsed.get("sentiment", 0.5)
+                    output["traffic_estimate"]["monthly_visits"] = social_parsed.get("web_traffic", 0)
 
-        except Exception as e:
-            print(f"[AlternativeData] Error: {e}")
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch alternative data for {request.company_name}: {str(e)}"
+        )
 
-    # Traffic estimation (proxy method)
-    output["traffic_estimate"]["monthly_visits"] = random.randint(10000, 100000)
-    output["traffic_estimate"]["growth_rate"] = random.random() * 0.3
+    # Traffic estimation - require real data
+    if output["traffic_estimate"]["monthly_visits"] == 0 and exa and llm:
+        traffic_query = f"{request.company_name} website traffic visitors similarweb"
+        traffic_results = exa.search_and_contents(query=traffic_query, num_results=3, text=True)
+        if traffic_results.results:
+            traffic_context = "\n".join([(r.text or "")[:300] for r in traffic_results.results])
+            traffic_response = llm.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=100,
+                messages=[{
+                    "role": "user",
+                    "content": f"Estimate monthly web traffic for {request.company_name} from: {traffic_context}\nReturn JSON: {{\"monthly_visits\": number, \"growth_rate\": 0.0-1.0}}"
+                }]
+            )
+            try:
+                import json
+                t_text = traffic_response.content[0].text
+                if "{" in t_text:
+                    t_parsed = json.loads(t_text[t_text.find("{"):t_text.rfind("}")+1])
+                    output["traffic_estimate"]["monthly_visits"] = t_parsed.get("monthly_visits", 0)
+                    output["traffic_estimate"]["growth_rate"] = t_parsed.get("growth_rate", 0.0)
+                    output["traffic_estimate"]["confidence"] = "medium"
+            except:
+                pass
 
     elapsed = (datetime.now() - start).total_seconds() * 1000
 
@@ -334,122 +373,93 @@ async def financial_signals(request: FinancialSignalsInput) -> NodeResponse:
     exa = get_exa()
     llm = get_llm()
 
+    # Require APIs for production
+    if not exa or not llm:
+        raise HTTPException(
+            status_code=503,
+            detail="EXA_API_KEY and ANTHROPIC_API_KEY required for financial signals. Cannot proceed without real data."
+        )
+
     output = {
         "public_comps": [],
         "recent_ma": [],
         "median_multiples": {
-            "revenue": 10.0,
-            "arr": 12.0,
-            "users": 500
+            "revenue": 0.0,
+            "arr": 0.0,
+            "users": 0
         },
         "sector_benchmarks": {
-            "median_seed_valuation": 12000000,
-            "median_series_a": 50000000,
-            "capital_efficiency": 0.8
+            "median_seed_valuation": 0,
+            "median_series_a": 0,
+            "capital_efficiency": 0.0
         }
     }
 
-    # Sector-specific benchmarks
-    SECTOR_BENCHMARKS = {
-        "ai": {
-            "revenue_multiple": 25.0,
-            "arr_multiple": 30.0,
-            "seed_valuation": 20000000,
-            "series_a": 80000000
-        },
-        "developer tools": {
-            "revenue_multiple": 15.0,
-            "arr_multiple": 18.0,
-            "seed_valuation": 15000000,
-            "series_a": 60000000
-        },
-        "fintech": {
-            "revenue_multiple": 8.0,
-            "arr_multiple": 10.0,
-            "seed_valuation": 12000000,
-            "series_a": 45000000
-        },
-        "saas": {
-            "revenue_multiple": 12.0,
-            "arr_multiple": 15.0,
-            "seed_valuation": 12000000,
-            "series_a": 50000000
-        },
-        "healthcare": {
-            "revenue_multiple": 6.0,
-            "arr_multiple": 8.0,
-            "seed_valuation": 10000000,
-            "series_a": 40000000
-        }
-    }
+    try:
+        # Search for public comps
+        comps_query = f"{request.sector} public company stock revenue multiple valuation 2024"
+        comps_results = exa.search_and_contents(query=comps_query, num_results=5, text=True)
 
-    sector_lower = request.sector.lower()
-    for key, bench in SECTOR_BENCHMARKS.items():
-        if key in sector_lower:
-            output["median_multiples"]["revenue"] = bench["revenue_multiple"]
-            output["median_multiples"]["arr"] = bench["arr_multiple"]
-            output["sector_benchmarks"]["median_seed_valuation"] = bench["seed_valuation"]
-            output["sector_benchmarks"]["median_series_a"] = bench["series_a"]
-            break
-
-    if exa and llm:
-        try:
-            # Search for public comps
-            comps_query = f"{request.sector} public company stock revenue multiple"
-            comps_results = exa.search_and_contents(query=comps_query, num_results=5, text=True)
-
-            if comps_results.results:
-                context = "\n".join([(r.text or "")[:400] for r in comps_results.results[:3]])
-                response = llm.messages.create(
-                    model="claude-sonnet-4-20250514",
-                    max_tokens=300,
-                    messages=[{
-                        "role": "user",
-                        "content": f"""List 3-5 public companies in {request.sector} with their revenue multiples.
+        if comps_results.results:
+            context = "\n".join([(r.text or "")[:400] for r in comps_results.results[:3]])
+            response = llm.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=400,
+                messages=[{
+                    "role": "user",
+                    "content": f"""Analyze financial benchmarks for {request.sector} sector:
 
 {context}
 
-Return JSON: {{"comps": [{{"name": "...", "ticker": "...", "revenue_multiple": N, "market_cap": N}}]}}"""
-                    }]
-                )
-                try:
-                    import json
-                    text = response.content[0].text
-                    if "{" in text:
-                        parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
-                        output["public_comps"] = parsed.get("comps", [])[:5]
-                except:
-                    pass
+Return JSON with real data:
+{{
+    "comps": [{{"name": "company", "ticker": "SYM", "revenue_multiple": number, "market_cap": billions}}],
+    "median_revenue_multiple": number,
+    "median_arr_multiple": number,
+    "median_seed_valuation": number_in_dollars,
+    "median_series_a": number_in_dollars
+}}"""
+                }]
+            )
+            import json
+            text = response.content[0].text
+            if "{" in text:
+                parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
+                output["public_comps"] = parsed.get("comps", [])[:5]
+                output["median_multiples"]["revenue"] = parsed.get("median_revenue_multiple", 0)
+                output["median_multiples"]["arr"] = parsed.get("median_arr_multiple", 0)
+                output["sector_benchmarks"]["median_seed_valuation"] = parsed.get("median_seed_valuation", 0)
+                output["sector_benchmarks"]["median_series_a"] = parsed.get("median_series_a", 0)
 
-            # Search for recent M&A
-            ma_query = f"{request.sector} startup acquisition deal 2024"
-            ma_results = exa.search_and_contents(query=ma_query, num_results=5, text=True)
+        # Search for recent M&A
+        ma_query = f"{request.sector} startup acquisition deal 2024"
+        ma_results = exa.search_and_contents(query=ma_query, num_results=5, text=True)
 
-            if ma_results.results:
-                context = "\n".join([(r.text or "")[:400] for r in ma_results.results[:3]])
-                response = llm.messages.create(
-                    model="claude-sonnet-4-20250514",
-                    max_tokens=300,
-                    messages=[{
-                        "role": "user",
-                        "content": f"""List recent acquisitions in {request.sector}:
+        if ma_results.results:
+            context = "\n".join([(r.text or "")[:400] for r in ma_results.results[:3]])
+            response = llm.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=300,
+                messages=[{
+                    "role": "user",
+                    "content": f"""List recent acquisitions in {request.sector}:
 
 {context}
 
 Return JSON: {{"deals": [{{"target": "...", "acquirer": "...", "value": N, "multiple": N}}]}}"""
-                    }]
-                )
-                try:
-                    import json
-                    text = response.content[0].text
-                    if "{" in text:
-                        parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
-                        output["recent_ma"] = parsed.get("deals", [])[:5]
-                except:
-                    pass
+                }]
+            )
+            import json
+            text = response.content[0].text
+            if "{" in text:
+                parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
+                output["recent_ma"] = parsed.get("deals", [])[:5]
 
-        except Exception as e:
-            print(f"[FinancialSignals] Error: {e}")
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to fetch financial signals for {request.sector}: {str(e)}"
+        )
 
     elapsed = (datetime.now() - start).total_seconds() * 1000
 

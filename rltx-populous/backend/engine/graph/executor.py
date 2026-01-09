@@ -14,6 +14,20 @@ import uuid
 from datetime import datetime
 from typing import Dict, List, Any, Optional, Callable
 from pydantic import BaseModel
+from pathlib import Path
+
+# Ensure environment is loaded
+try:
+    from dotenv import load_dotenv
+    _env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+    if _env_path.exists():
+        load_dotenv(_env_path, override=True)
+        print(f"[Executor] Loaded .env from {_env_path}")
+        print(f"[Executor] EXA_API_KEY: {'SET' if os.environ.get('EXA_API_KEY') else 'NOT SET'}")
+    else:
+        print(f"[Executor] .env not found at {_env_path}")
+except ImportError:
+    print("[Executor] dotenv not available")
 
 from backend.engine.graph.schemas import (
     GraphState, NODE_DEFINITIONS, get_execution_order,
@@ -70,11 +84,23 @@ class GraphExecutor:
         self._init_clients()
 
     def _init_clients(self):
-        """Initialize API clients"""
-        if Anthropic and os.environ.get("ANTHROPIC_API_KEY"):
+        """Initialize API clients - re-load env to ensure keys are available"""
+        # Force reload .env to ensure keys are available
+        try:
+            from dotenv import load_dotenv
+            _env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+            if _env_path.exists():
+                load_dotenv(_env_path, override=True)
+        except ImportError:
+            pass
+
+        exa_key = os.environ.get("EXA_API_KEY")
+        anthropic_key = os.environ.get("ANTHROPIC_API_KEY")
+
+        if Anthropic and anthropic_key:
             self._llm = Anthropic()
-        if Exa and os.environ.get("EXA_API_KEY"):
-            self._exa = Exa(os.environ.get("EXA_API_KEY"))
+        if Exa and exa_key:
+            self._exa = Exa(exa_key)
 
     async def execute(
         self,
@@ -256,25 +282,154 @@ class GraphExecutor:
     # =========================================================================
 
     async def _execute_batch(self, state: GraphState) -> BatchOutput:
-        """Load companies from batch"""
+        """Load companies from batch using real Exa search with robust extraction"""
+        import json
+        import re
+
         batch_input = state.batch_input
         if not batch_input:
             raise ValueError("No batch input provided")
 
         batch_name = f"{batch_input.accelerator} {batch_input.batch_code}"
 
-        # YC batch company lists (real companies)
-        YC_BATCHES = {
-            "YC W24": ["Simular", "Greptile", "Artisan AI", "Laminar", "Miru", "Draftaid", "Campana", "Peakflo", "Orby AI", "Codegen"],
-            "YC S23": ["Wondercraft", "Velt", "Turntable", "Reworkd AI", "Mintlify", "LlamaIndex", "Finch", "Copy.ai", "CodeComplete", "Baseten"],
-            "YC W23": ["Resend", "Tremor", "Nango", "Firecrawl", "Dub", "Cal.com", "Buildship", "Trigger.dev", "Infisical", "OpenPipe"],
-            "YC S22": ["Replit", "Supabase", "Anthropic", "PostHog", "Retool", "Deel", "Linear", "Braintrust", "Railway", "Vercel"],
-        }
+        # Require Exa for production - no hardcoded fallbacks
+        if not self._exa:
+            raise ValueError("EXA_API_KEY required for batch discovery. Cannot proceed without real data.")
 
-        companies = YC_BATCHES.get(batch_name, [])[:batch_input.max_companies]
+        if not self._llm:
+            raise ValueError("ANTHROPIC_API_KEY required for data extraction. Cannot proceed without real data.")
 
-        # Determine batch theme based on companies
-        theme = "AI/ML focused" if any("AI" in c for c in companies) else "Developer tools"
+        # Multiple search strategies for better coverage
+        search_queries = [
+            f"Y Combinator {batch_input.batch_code} batch companies startups list 2024",
+            f"YC {batch_input.batch_code} startups funded companies",
+            f"site:ycombinator.com {batch_input.batch_code} batch companies",
+        ]
+
+        all_search_results = []
+        for query in search_queries:
+            try:
+                print(f"[Batch] Searching: {query}")
+                search_results = self._exa.search_and_contents(
+                    query=query,
+                    num_results=5,
+                    text=True
+                )
+                if search_results.results:
+                    all_search_results.extend(search_results.results)
+                    print(f"[Batch] Found {len(search_results.results)} results")
+            except Exception as e:
+                print(f"[Batch] Search failed for '{query}': {e}")
+                continue
+
+        if not all_search_results:
+            raise ValueError(f"No search results found for batch {batch_name}. Check batch code or Exa API credits.")
+
+        # Build context from all results, deduped by title
+        seen_titles = set()
+        context_parts = []
+        for r in all_search_results:
+            if r.title not in seen_titles:
+                seen_titles.add(r.title)
+                text_content = (r.text or '')[:1000]
+                context_parts.append(f"Source: {r.title}\nURL: {r.url}\n{text_content}")
+
+        context = "\n\n---\n\n".join(context_parts[:8])
+        print(f"[Batch] Context length: {len(context)} chars from {len(context_parts)} sources")
+
+        # Extract company names using Claude with improved prompt
+        response = self._llm.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=1000,
+            messages=[{
+                "role": "user",
+                "content": f"""You are extracting Y Combinator startup company names from search results.
+
+TASK: Extract startup company names from the Y Combinator {batch_input.batch_code} batch information below.
+
+SEARCH RESULTS:
+{context}
+
+INSTRUCTIONS:
+1. Look for startup company names mentioned in the context
+2. Filter out: investor names, accelerator names (YC, Y Combinator), people names, generic terms
+3. Include only actual startup company names
+4. If you find company names with descriptions, extract just the name
+
+IMPORTANT: You MUST respond with ONLY a valid JSON array of strings. No other text.
+
+Example format:
+["Stripe", "Airbnb", "Dropbox", "Notion", "Figma"]
+
+Now extract the company names:"""
+            }]
+        )
+
+        raw_response = response.content[0].text.strip()
+        print(f"[Batch] LLM raw response: {raw_response[:200]}...")
+
+        # Robust JSON extraction
+        companies = []
+
+        # Try direct JSON parse first
+        try:
+            companies = json.loads(raw_response)
+        except json.JSONDecodeError:
+            # Try to find JSON array in response
+            json_match = re.search(r'\[[\s\S]*?\]', raw_response)
+            if json_match:
+                try:
+                    companies = json.loads(json_match.group())
+                except json.JSONDecodeError:
+                    pass
+
+        # If still no companies, try line-by-line extraction
+        if not companies:
+            # Look for quoted strings or bullet points
+            name_patterns = [
+                r'"([^"]+)"',  # Quoted names
+                r"'([^']+)'",  # Single-quoted names
+                r"^\s*[-•*]\s*(.+?)(?:\s*[-–—]|$)",  # Bullet points
+                r"^\d+\.\s*(.+?)(?:\s*[-–—]|$)",  # Numbered list
+            ]
+            for pattern in name_patterns:
+                matches = re.findall(pattern, raw_response, re.MULTILINE)
+                if matches:
+                    companies = [m.strip() for m in matches if len(m.strip()) > 2 and len(m.strip()) < 50]
+                    if len(companies) >= 3:
+                        break
+
+        # Validate and clean company names
+        companies = [
+            c.strip() for c in companies
+            if isinstance(c, str)
+            and len(c.strip()) > 1
+            and len(c.strip()) < 100
+            and c.lower() not in ['y combinator', 'yc', 'ycombinator', 'startup', 'company', 'batch']
+        ]
+
+        if not companies:
+            raise ValueError(f"Could not extract company names from batch {batch_name}. LLM response did not contain valid company names.")
+
+        # Limit to requested max
+        companies = companies[:batch_input.max_companies]
+        print(f"[Batch] Extracted {len(companies)} companies: {companies}")
+
+        # Determine batch theme using LLM
+        try:
+            theme_response = self._llm.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=50,
+                messages=[{
+                    "role": "user",
+                    "content": f"What is the primary theme/focus of these YC companies: {', '.join(companies[:5])}? Reply with just 2-4 words like 'AI/ML focused' or 'Developer tools' or 'Fintech'."
+                }]
+            )
+            theme = theme_response.content[0].text.strip()
+        except Exception:
+            theme = "Mixed technology"
+
+        print(f"[Batch] Discovered {len(companies)} companies from {batch_name}: {companies}")
 
         return BatchOutput(
             batch_name=batch_name,
@@ -303,256 +458,334 @@ class GraphExecutor:
                 founders = []
                 if company_data.founders:
                     for f in company_data.founders:
+                        # Safely extract values handling both DataPoint objects and plain strings
+                        def safe_get(obj, attr, default=""):
+                            val = getattr(obj, attr, None) if hasattr(obj, attr) else None
+                            if val is None:
+                                return default
+                            return val.value if hasattr(val, 'value') else (str(val) if val else default)
+
                         founders.append(Founder(
-                            name=f.name.value if hasattr(f.name, 'value') else str(f.name),
-                            role=f.role.value if hasattr(f, 'role') and f.role else "",
-                            prior_exits=f.prior_exits.value if hasattr(f, 'prior_exits') and f.prior_exits else 0,
-                            years_experience=f.years_experience.value if hasattr(f, 'years_experience') and f.years_experience else 0,
-                            education=f.education.value if hasattr(f, 'education') and f.education else "",
+                            name=safe_get(f, 'name', 'Unknown'),
+                            role=safe_get(f, 'role', ''),
+                            prior_exits=int(safe_get(f, 'prior_exits', 0) or 0),
+                            years_experience=int(safe_get(f, 'years_experience', 0) or 0),
+                            education=safe_get(f, 'education', ''),
                             confidence=DataConfidence.MEDIUM
                         ))
+
+                # Helper to safely extract value from DataPoint or plain value
+                def extract_val(val, default=None):
+                    if val is None:
+                        return default
+                    return val.value if hasattr(val, 'value') else val
 
                 funding_rounds = []
                 if company_data.funding:
                     # FundingData has individual fields, not a rounds list
                     if company_data.funding.last_round_amount:
                         funding_rounds.append(FundingRound(
-                            round_type=company_data.funding.last_round_type.value if company_data.funding.last_round_type and hasattr(company_data.funding.last_round_type, 'value') else "seed",
-                            amount_usd=company_data.funding.last_round_amount.value if hasattr(company_data.funding.last_round_amount, 'value') else 0,
-                            date=company_data.funding.last_round_date.value if company_data.funding.last_round_date and hasattr(company_data.funding.last_round_date, 'value') else None,
-                            investors=[inv.value for inv in company_data.funding.investors if hasattr(inv, 'value')] if company_data.funding.investors else [],
+                            round_type=extract_val(company_data.funding.last_round_type, "seed"),
+                            amount_usd=extract_val(company_data.funding.last_round_amount, 0) or 0,
+                            date=extract_val(company_data.funding.last_round_date),
+                            investors=[extract_val(inv) for inv in (company_data.funding.investors or []) if extract_val(inv)],
                             confidence=DataConfidence.MEDIUM
                         ))
 
                 total_raised = 0
                 if company_data.funding and company_data.funding.total_raised:
-                    total_raised = company_data.funding.total_raised.value if hasattr(company_data.funding.total_raised, 'value') else 0
+                    total_raised = extract_val(company_data.funding.total_raised, 0) or 0
 
                 results[company_name] = ResearchOutput(
                     company_name=company_name,
-                    description=company_data.description.value if hasattr(company_data, 'description') and company_data.description else "",
-                    website=company_data.website.value if hasattr(company_data, 'website') and company_data.website else None,
-                    industry=company_data.industry.value if hasattr(company_data, 'industry') and company_data.industry else "",
+                    description=extract_val(company_data.description, "") if hasattr(company_data, 'description') else "",
+                    website=extract_val(company_data.website) if hasattr(company_data, 'website') else None,
+                    industry=extract_val(company_data.industry, "") if hasattr(company_data, 'industry') else "",
                     founders=founders,
                     funding_rounds=funding_rounds,
                     total_raised=total_raised,
-                    revenue_estimate=(company_data.traction.revenue_annual.value if company_data.traction.revenue_annual else None) if hasattr(company_data, 'traction') and company_data.traction else None,
+                    revenue_estimate=extract_val(company_data.traction.revenue_annual) if hasattr(company_data, 'traction') and company_data.traction else None,
                     source_count=company_data.source_count if hasattr(company_data, 'source_count') else 0,
                     data_quality=DataConfidence.MEDIUM
                 )
 
             except Exception as e:
-                print(f"[Research] Failed for {company_name}: {e}")
+                # Research failed - record the error but don't silently proceed with empty data
+                error_msg = str(e)
+                print(f"[Research] FAILED for {company_name}: {error_msg}")
                 results[company_name] = ResearchOutput(
                     company_name=company_name,
-                    data_quality=DataConfidence.LOW
+                    description=f"Research failed: {error_msg[:100]}",
+                    data_quality=DataConfidence.FAILED
                 )
+                # Continue to other companies but this one will be flagged
 
         return results
 
     async def _execute_market_scanner(self, state: GraphState) -> MarketScannerOutput:
-        """Scan market for sector intelligence"""
+        """Scan market for sector intelligence - requires real data"""
+        # Require APIs for production
+        if not self._exa:
+            raise ValueError("EXA_API_KEY required for market intelligence. Cannot proceed without real data.")
+        if not self._llm:
+            raise ValueError("ANTHROPIC_API_KEY required for market analysis. Cannot proceed without real data.")
+
         # Determine sector from batch
-        sector = "AI/developer tools"  # Default
-        if state.batch and "theme" in state.batch.batch_theme.lower():
-            sector = state.batch.batch_theme
+        sector = state.batch.batch_theme if state.batch else "technology"
+
+        # Search for sector funding news
+        funding_query = f"{sector} startup funding raised 2024 2025"
+        funding_results = self._exa.search_and_contents(
+            query=funding_query,
+            num_results=10,
+            text=True
+        )
+
+        if not funding_results.results:
+            raise ValueError(f"No market data found for sector: {sector}")
+
+        # Search for market trends
+        trends_query = f"{sector} market trends analysis investment outlook 2024 2025"
+        trends_results = self._exa.search_and_contents(
+            query=trends_query,
+            num_results=5,
+            text=True
+        )
+
+        # Combine context for analysis
+        funding_context = "\n".join([
+            f"Source: {r.title}\n{(r.text or '')[:600]}"
+            for r in funding_results.results[:5]
+        ])
+
+        trends_context = "\n".join([
+            f"Source: {r.title}\n{(r.text or '')[:400]}"
+            for r in (trends_results.results[:3] if trends_results.results else [])
+        ])
+
+        response = self._llm.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=600,
+            messages=[{
+                "role": "user",
+                "content": f"""Analyze this market intelligence for the {sector} sector:
+
+FUNDING NEWS:
+{funding_context}
+
+MARKET TRENDS:
+{trends_context}
+
+Extract as JSON (be precise based on the actual data):
+{{
+    "sentiment": 0.0-1.0 (current funding sentiment based on deal volume and sizes),
+    "phase": "nascent|emerging|growth|mature|declining" (market cycle phase),
+    "trends": ["trend1", "trend2", "trend3"] (key sector trends),
+    "deals": [{{"company": "name", "amount": dollars_number, "date": "YYYY-MM"}}] (recent deals from the news),
+    "timing_adjustment": -0.2 to 0.2 (how favorable is current timing for new investments),
+    "funding_velocity": 0.0-1.0 (how fast is money flowing into this sector)
+}}"""
+            }]
+        )
+
+        import json
+        text = response.content[0].text
+        if "{" not in text:
+            raise ValueError(f"Failed to parse market analysis for sector: {sector}")
+
+        parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
 
         output = MarketScannerOutput(
             sector=sector,
-            market_phase=MarketPhase.GROWTH,
-            market_sentiment=0.5,
-            sector_funding_velocity=0.0,
-            timing_score_adjustment=0.0
+            market_sentiment=parsed.get("sentiment", 0.5),
+            market_phase=MarketPhase(parsed.get("phase", "growth")),
+            key_trends=parsed.get("trends", [])[:5],
+            recent_deals=parsed.get("deals", [])[:5],
+            timing_score_adjustment=parsed.get("timing_adjustment", 0.0),
+            sector_funding_velocity=parsed.get("funding_velocity", 0.0)
         )
 
-        if self._exa:
-            try:
-                # Search for sector funding news
-                funding_query = f"{sector} startup funding raised 2024"
-                funding_results = self._exa.search_and_contents(
-                    query=funding_query,
-                    num_results=10,
-                    text=True
-                )
-
-                # Search for trends
-                trends_query = f"{sector} market trends analysis 2024"
-                trends_results = self._exa.search_and_contents(
-                    query=trends_query,
-                    num_results=5,
-                    text=True
-                )
-
-                # Process with LLM
-                if self._llm and funding_results.results:
-                    context = "\n".join([
-                        f"Source: {r.title}\n{(r.text or '')[:500]}"
-                        for r in funding_results.results[:5]
-                    ])
-
-                    response = self._llm.messages.create(
-                        model="claude-sonnet-4-20250514",
-                        max_tokens=500,
-                        messages=[{
-                            "role": "user",
-                            "content": f"""Analyze this funding news for the {sector} sector:
-
-{context}
-
-Extract as JSON:
-{{
-    "sentiment": 0.0-1.0 (funding sentiment),
-    "phase": "nascent|emerging|growth|mature|declining",
-    "trends": ["trend1", "trend2", "trend3"],
-    "deals": [{{"company": "...", "amount": 0, "date": "..."}}],
-    "timing_adjustment": -0.2 to 0.2 (how much to adjust timing score)
-}}"""
-                        }]
-                    )
-
-                    import json
-                    text = response.content[0].text
-                    if "{" in text:
-                        parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
-                        output.market_sentiment = parsed.get("sentiment", 0.65)
-                        output.market_phase = MarketPhase(parsed.get("phase", "growth"))
-                        output.key_trends = parsed.get("trends", [])[:5]
-                        output.recent_deals = parsed.get("deals", [])[:5]
-                        output.timing_score_adjustment = parsed.get("timing_adjustment", 0.0)
-                        output.sector_funding_velocity = len(output.recent_deals) * 0.05
-
-            except Exception as e:
-                print(f"[MarketScanner] Error: {e}")
-
-        # Fallback adjustments based on sector keywords
-        if output.market_sentiment == 0.5:
-            if "ai" in sector.lower():
-                output.market_sentiment = 0.85
-                output.market_phase = MarketPhase.GROWTH
-                output.timing_score_adjustment = 0.10
-            elif "developer" in sector.lower():
-                output.market_sentiment = 0.75
-                output.timing_score_adjustment = 0.05
+        print(f"[MarketScanner] {sector}: sentiment={output.market_sentiment:.2f}, phase={output.market_phase.value}, {len(output.recent_deals)} deals found")
 
         return output
 
     async def _execute_alternative_data(self, state: GraphState) -> Dict[str, AlternativeDataOutput]:
-        """Gather alternative signals for each company"""
+        """Gather alternative signals for each company - requires real data"""
+        # Require APIs for production
+        if not self._exa:
+            raise ValueError("EXA_API_KEY required for alternative data signals. Cannot proceed without real data.")
+        if not self._llm:
+            raise ValueError("ANTHROPIC_API_KEY required for signal analysis. Cannot proceed without real data.")
+
         results = {}
 
         for company_name in state.target_companies:
             output = AlternativeDataOutput(company_name=company_name)
-
-            # Get website from research if available
             research = state.research.get(company_name)
-            website = research.website if research else None
 
-            if self._exa:
-                try:
-                    # GitHub search
-                    gh_query = f"site:github.com {company_name}"
-                    gh_results = self._exa.search_and_contents(query=gh_query, num_results=5, text=True)
+            # GitHub search - extract real metrics
+            gh_query = f"site:github.com {company_name} stars repository"
+            gh_results = self._exa.search_and_contents(query=gh_query, num_results=5, text=True)
 
-                    if gh_results.results:
-                        output.github_repos = len(gh_results.results)
-                        # Estimate stars from text mentions
-                        text = " ".join([(r.text or "") for r in gh_results.results])
-                        output.github_stars = max(100, text.lower().count("star") * 50)
+            if gh_results.results:
+                gh_context = "\n".join([(r.text or "")[:400] for r in gh_results.results[:3]])
+                gh_response = self._llm.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=150,
+                    messages=[{
+                        "role": "user",
+                        "content": f"""From GitHub data for {company_name}:
+{gh_context}
+Extract JSON: {{"repos": number_of_repos, "total_stars": estimated_total_stars, "contributors": estimated_contributors}}
+If data not found, use 0."""
+                    }]
+                )
+                import json
+                gh_text = gh_response.content[0].text
+                if "{" in gh_text:
+                    gh_parsed = json.loads(gh_text[gh_text.find("{"):gh_text.rfind("}")+1])
+                    output.github_repos = gh_parsed.get("repos", 0)
+                    output.github_stars = gh_parsed.get("total_stars", 0)
 
-                    # Jobs search
-                    jobs_query = f"{company_name} careers jobs hiring"
-                    jobs_results = self._exa.search_and_contents(query=jobs_query, num_results=5, text=True)
+            # Jobs search
+            jobs_query = f"{company_name} careers jobs hiring open positions"
+            jobs_results = self._exa.search_and_contents(query=jobs_query, num_results=5, text=True)
 
-                    if jobs_results.results and self._llm:
-                        context = "\n".join([(r.text or "")[:300] for r in jobs_results.results[:3]])
-                        response = self._llm.messages.create(
-                            model="claude-sonnet-4-20250514",
-                            max_tokens=150,
-                            messages=[{
-                                "role": "user",
-                                "content": f"""From job postings for {company_name}:
-{context}
-Return JSON: {{"positions": N, "engineering": N, "growth": N, "velocity": "accelerating|stable|slowing"}}"""
-                            }]
-                        )
-                        import json
-                        text = response.content[0].text
-                        if "{" in text:
-                            parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
-                            output.open_positions = parsed.get("positions", 0)
-                            output.engineering_roles = parsed.get("engineering", 0)
-                            output.growth_roles = parsed.get("growth", 0)
-                            output.hiring_velocity = parsed.get("velocity", "unknown")
+            if jobs_results.results:
+                jobs_context = "\n".join([(r.text or "")[:300] for r in jobs_results.results[:3]])
+                jobs_response = self._llm.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=150,
+                    messages=[{
+                        "role": "user",
+                        "content": f"""From job postings for {company_name}:
+{jobs_context}
+Return JSON: {{"positions": total_open, "engineering": eng_roles, "growth": sales_marketing_roles, "velocity": "accelerating|stable|slowing"}}"""
+                    }]
+                )
+                jobs_text = jobs_response.content[0].text
+                if "{" in jobs_text:
+                    jobs_parsed = json.loads(jobs_text[jobs_text.find("{"):jobs_text.rfind("}")+1])
+                    output.open_positions = jobs_parsed.get("positions", 0)
+                    output.engineering_roles = jobs_parsed.get("engineering", 0)
+                    output.growth_roles = jobs_parsed.get("growth", 0)
+                    output.hiring_velocity = jobs_parsed.get("velocity", "unknown")
 
-                except Exception as e:
-                    print(f"[AltData] Error for {company_name}: {e}")
+            # Social/web presence search
+            social_query = f"{company_name} twitter linkedin followers company profile"
+            social_results = self._exa.search_and_contents(query=social_query, num_results=5, text=True)
 
-            # Calculate traction adjustment
-            # Strong hiring = positive adjustment
+            if social_results.results:
+                social_context = "\n".join([(r.text or "")[:300] for r in social_results.results[:3]])
+                social_response = self._llm.messages.create(
+                    model="claude-sonnet-4-20250514",
+                    max_tokens=200,
+                    messages=[{
+                        "role": "user",
+                        "content": f"""From social media data for {company_name}:
+{social_context}
+Extract JSON: {{"twitter_followers": number, "linkedin_followers": number, "web_traffic_estimate": monthly_visits, "sentiment": 0.0-1.0}}
+Estimate based on company stage and mentions if exact numbers not found."""
+                    }]
+                )
+                social_text = social_response.content[0].text
+                if "{" in social_text:
+                    social_parsed = json.loads(social_text[social_text.find("{"):social_text.rfind("}")+1])
+                    output.twitter_followers = social_parsed.get("twitter_followers", 0)
+                    output.linkedin_followers = social_parsed.get("linkedin_followers", 0)
+                    output.web_traffic_monthly = social_parsed.get("web_traffic_estimate", 0)
+                    output.social_sentiment = social_parsed.get("sentiment", 0.5)
+
+            # Calculate traction adjustment based on real signals
             if output.hiring_velocity == "accelerating":
                 output.traction_score_adjustment = 0.10
             elif output.open_positions > 10:
                 output.traction_score_adjustment = 0.05
             elif output.github_stars > 1000:
                 output.traction_score_adjustment = 0.05
+            elif output.web_traffic_monthly > 50000:
+                output.traction_score_adjustment = 0.03
 
             results[company_name] = output
+            print(f"[AltData] {company_name}: {output.github_stars} stars, {output.open_positions} jobs, {output.web_traffic_monthly} traffic")
 
         return results
 
     async def _execute_financial_signals(self, state: GraphState) -> FinancialSignalsOutput:
-        """Get financial benchmarks for the sector"""
+        """Get financial benchmarks for the sector - requires real data"""
+        # Require APIs for production
+        if not self._exa:
+            raise ValueError("EXA_API_KEY required for financial signals. Cannot proceed without real data.")
+        if not self._llm:
+            raise ValueError("ANTHROPIC_API_KEY required for financial analysis. Cannot proceed without real data.")
+
         sector = state.market_scanner.sector if state.market_scanner else "technology"
 
-        # Sector-specific benchmarks (real data)
-        BENCHMARKS = {
-            "ai": {"revenue_mult": 25.0, "arr_mult": 30.0, "seed_val": 20e6, "series_a": 80e6},
-            "developer": {"revenue_mult": 15.0, "arr_mult": 18.0, "seed_val": 15e6, "series_a": 60e6},
-            "fintech": {"revenue_mult": 8.0, "arr_mult": 10.0, "seed_val": 12e6, "series_a": 45e6},
-            "saas": {"revenue_mult": 12.0, "arr_mult": 15.0, "seed_val": 12e6, "series_a": 50e6},
-        }
+        # Search for public company valuation data
+        comps_query = f"{sector} public company valuation revenue multiple 2024 stock"
+        comps_results = self._exa.search_and_contents(query=comps_query, num_results=8, text=True)
 
-        # Find matching benchmark
-        bench = {"revenue_mult": 10.0, "arr_mult": 12.0, "seed_val": 12e6, "series_a": 50e6}
-        for key, data in BENCHMARKS.items():
-            if key in sector.lower():
-                bench = data
-                break
+        if not comps_results.results:
+            raise ValueError(f"No financial benchmark data found for sector: {sector}")
+
+        # Search for recent M&A and funding rounds
+        funding_query = f"{sector} startup valuation seed series A funding round 2024"
+        funding_results = self._exa.search_and_contents(query=funding_query, num_results=5, text=True)
+
+        # Combine context for comprehensive analysis
+        comps_context = "\n".join([
+            f"Source: {r.title}\n{(r.text or '')[:500]}"
+            for r in comps_results.results[:5]
+        ])
+
+        funding_context = "\n".join([
+            f"Source: {r.title}\n{(r.text or '')[:400]}"
+            for r in (funding_results.results[:3] if funding_results.results else [])
+        ])
+
+        response = self._llm.messages.create(
+            model="claude-sonnet-4-20250514",
+            max_tokens=600,
+            messages=[{
+                "role": "user",
+                "content": f"""Analyze financial benchmarks for the {sector} sector:
+
+PUBLIC COMPANIES:
+{comps_context}
+
+FUNDING DATA:
+{funding_context}
+
+Extract as JSON (use real data from sources):
+{{
+    "comps": [{{"name": "company", "ticker": "SYM", "revenue_multiple": number, "market_cap_billions": number}}],
+    "median_revenue_multiple": number,
+    "median_arr_multiple": number,
+    "median_seed_valuation": number_in_dollars,
+    "median_series_a_valuation": number_in_dollars,
+    "recent_deals": [{{"company": "name", "round": "seed|A|B", "valuation": number, "date": "YYYY-MM"}}]
+}}"""
+            }]
+        )
+
+        import json
+        text = response.content[0].text
+        if "{" not in text:
+            raise ValueError(f"Failed to parse financial benchmarks for sector: {sector}")
+
+        parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
 
         output = FinancialSignalsOutput(
             sector=sector,
-            median_revenue_multiple=bench["revenue_mult"],
-            median_arr_multiple=bench["arr_mult"],
-            median_seed_valuation=bench["seed_val"],
-            median_series_a_valuation=bench["series_a"]
+            public_comps=parsed.get("comps", [])[:5],
+            median_revenue_multiple=parsed.get("median_revenue_multiple", 10.0),
+            median_arr_multiple=parsed.get("median_arr_multiple", 12.0),
+            median_seed_valuation=parsed.get("median_seed_valuation", 12000000),
+            median_series_a_valuation=parsed.get("median_series_a_valuation", 50000000),
+            recent_acquisitions=parsed.get("recent_deals", [])[:5]
         )
 
-        # Try to get real comps from Exa
-        if self._exa and self._llm:
-            try:
-                query = f"{sector} public company stock revenue multiple 2024"
-                results = self._exa.search_and_contents(query=query, num_results=5, text=True)
-
-                if results.results:
-                    context = "\n".join([(r.text or "")[:400] for r in results.results[:3]])
-                    response = self._llm.messages.create(
-                        model="claude-sonnet-4-20250514",
-                        max_tokens=300,
-                        messages=[{
-                            "role": "user",
-                            "content": f"""List public companies in {sector} with revenue multiples:
-{context}
-Return JSON: {{"comps": [{{"name": "...", "ticker": "...", "revenue_multiple": N, "market_cap": N}}]}}"""
-                        }]
-                    )
-                    import json
-                    text = response.content[0].text
-                    if "{" in text:
-                        parsed = json.loads(text[text.find("{"):text.rfind("}")+1])
-                        output.public_comps = parsed.get("comps", [])[:5]
-
-            except Exception as e:
-                print(f"[FinancialSignals] Error: {e}")
+        print(f"[FinancialSignals] {sector}: {len(output.public_comps)} comps, rev_mult={output.median_revenue_multiple}x, seed=${output.median_seed_valuation/1e6:.0f}M")
 
         return output
 

@@ -24,6 +24,7 @@ class DataConfidence(str, Enum):
     MEDIUM = "medium"   # Single source or inferred
     LOW = "low"         # Estimated or old data
     UNKNOWN = "unknown" # No data available
+    FAILED = "failed"   # Data retrieval failed - explicit error
 
 
 class MarketPhase(str, Enum):

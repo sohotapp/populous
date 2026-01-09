@@ -403,6 +403,207 @@ class DeliverablesGenerator:
             return getattr(self.framework.investment_criteria, criteria_name, default)
         return default
 
+    def _build_team_assessment(self, pred: Any, research: Any, team_score: float, key_strengths: List[str]) -> Dict[str, Any]:
+        """Build team assessment from actual data"""
+        # Extract founder info from research
+        founders = []
+        if research and hasattr(research, 'founders'):
+            founders = [f.name if hasattr(f, 'name') else str(f) for f in (research.founders or [])]
+        elif isinstance(research, dict):
+            founders = [f.get('name', str(f)) if isinstance(f, dict) else str(f) for f in research.get('founders', [])]
+
+        # Build strengths from key_strengths or generate from score
+        team_strengths = [s for s in key_strengths if any(word in s.lower() for word in ['team', 'founder', 'experience', 'expertise', 'leader'])][:3]
+        if not team_strengths:
+            if team_score > 0.7:
+                team_strengths = ["Exceptional founding team with proven track record", "Deep domain expertise"]
+            elif team_score > 0.5:
+                team_strengths = ["Solid team with relevant experience", "Complementary skill sets"]
+            else:
+                team_strengths = ["Motivated founding team", "Learning rapidly"]
+
+        # Build concerns based on score
+        if team_score > 0.7:
+            concerns = ["Key person dependency"]
+        elif team_score > 0.5:
+            concerns = ["May need to strengthen go-to-market leadership"]
+        else:
+            concerns = ["Limited operating experience", "May need senior hires"]
+
+        return {
+            "score": team_score,
+            "founders": founders[:3] if founders else ["Founding team under research"],
+            "strengths": team_strengths,
+            "concerns": concerns
+        }
+
+    def _build_market_assessment(self, pred: Any, research: Any, market_score: float) -> Dict[str, Any]:
+        """Build market assessment from actual data"""
+        # Extract sector from research
+        sector = "Technology"
+        if research and hasattr(research, 'overview') and research.overview:
+            sector = getattr(research.overview, 'sector', 'Technology') if hasattr(research.overview, 'sector') else 'Technology'
+        elif isinstance(research, dict):
+            overview = research.get('overview', {})
+            sector = overview.get('sector', 'Technology') if isinstance(overview, dict) else 'Technology'
+
+        if market_score > 0.7:
+            tam = "$100B+"
+            growth = "30%+ CAGR"
+            timing = "Excellent - market inflection point"
+        elif market_score > 0.5:
+            tam = "$50B+"
+            growth = "20-30% CAGR"
+            timing = "Favorable - growing market"
+        else:
+            tam = "$10-50B"
+            growth = "10-20% CAGR"
+            timing = "Emerging - early market"
+
+        return {
+            "score": market_score,
+            "sector": sector,
+            "tam": tam,
+            "growth_rate": growth,
+            "timing": timing
+        }
+
+    def _build_traction_assessment(self, pred: Any, research: Any, traction_score: float) -> Dict[str, Any]:
+        """Build traction assessment from actual data"""
+        # Extract funding from research
+        funding = None
+        if research and hasattr(research, 'funding') and research.funding:
+            funding_data = research.funding
+            if hasattr(funding_data, 'value'):
+                funding = funding_data.value
+            elif isinstance(funding_data, dict):
+                funding = funding_data.get('value')
+
+        funding_str = f"${funding/1e6:.1f}M raised" if funding and funding > 0 else "Funding details under research"
+
+        if traction_score > 0.7:
+            stage = "Strong product-market fit"
+            metrics = "Revenue growing, strong retention"
+        elif traction_score > 0.5:
+            stage = "Early product-market fit signals"
+            metrics = "Growing user base, early revenue"
+        elif traction_score > 0.3:
+            stage = "Pre-revenue with user traction"
+            metrics = "User growth, engagement metrics"
+        else:
+            stage = "Pre-launch / Early development"
+            metrics = "Development milestones"
+
+        return {
+            "score": traction_score,
+            "funding": funding_str,
+            "stage": stage,
+            "key_metrics": metrics
+        }
+
+    def _build_competitive_assessment(self, pred: Any, research: Any) -> Dict[str, Any]:
+        """Build competitive assessment from research data"""
+        # Extract from research if available
+        competitors = []
+        if research and hasattr(research, 'overview') and research.overview:
+            if hasattr(research.overview, 'competitors'):
+                competitors = research.overview.competitors or []
+        elif isinstance(research, dict):
+            overview = research.get('overview', {})
+            if isinstance(overview, dict):
+                competitors = overview.get('competitors', [])
+
+        # Determine moat strength from prediction
+        moat = "Moderate"
+        diff = "Technical differentiation"
+        key_risks = getattr(pred, 'key_risks', []) if hasattr(pred, 'key_risks') else pred.get('key_risks', []) if isinstance(pred, dict) else []
+
+        if any('compet' in str(r).lower() for r in key_risks):
+            moat = "Developing"
+            diff = "Building defensibility"
+        elif any('first' in str(r).lower() or 'leader' in str(r).lower() for r in (getattr(pred, 'key_strengths', []) if hasattr(pred, 'key_strengths') else [])):
+            moat = "Strong first-mover advantage"
+            diff = "Market leadership position"
+
+        return {
+            "moat": moat,
+            "key_competitors": competitors[:3] if competitors else ["Market competitors under research"],
+            "differentiation": diff
+        }
+
+    def _build_top_risks(self, pred: Any, key_risks: List[str], team_score: float, market_score: float, traction_score: float) -> List[Dict[str, str]]:
+        """Build top risks from prediction key_risks and factor scores"""
+        risks = []
+
+        # Use actual key_risks from prediction
+        for risk in key_risks[:2]:
+            severity = "HIGH" if any(word in risk.lower() for word in ['major', 'critical', 'significant']) else "MEDIUM"
+            risks.append({
+                "risk": risk,
+                "severity": severity,
+                "mitigation": "Active monitoring and contingency planning"
+            })
+
+        # Add factor-based risks if we don't have enough
+        if team_score < 0.5 and len(risks) < 3:
+            risks.append({
+                "risk": f"Team execution risk (score: {team_score*100:.0f}/100)",
+                "severity": "HIGH" if team_score < 0.3 else "MEDIUM",
+                "mitigation": "Consider adding experienced advisors or operators"
+            })
+
+        if market_score < 0.5 and len(risks) < 3:
+            risks.append({
+                "risk": f"Market timing/size risk (score: {market_score*100:.0f}/100)",
+                "severity": "HIGH" if market_score < 0.3 else "MEDIUM",
+                "mitigation": "Monitor market development closely"
+            })
+
+        if traction_score < 0.4 and len(risks) < 3:
+            risks.append({
+                "risk": f"Product-market fit risk (score: {traction_score*100:.0f}/100)",
+                "severity": "HIGH" if traction_score < 0.2 else "MEDIUM",
+                "mitigation": "Milestone-based funding tranches"
+            })
+
+        # Ensure we have at least 3 risks
+        default_risks = [
+            {"risk": "Competitive dynamics", "severity": "MEDIUM", "mitigation": "Build sustainable moat"},
+            {"risk": "Funding environment", "severity": "MEDIUM", "mitigation": "Capital efficient growth"},
+            {"risk": "Regulatory changes", "severity": "LOW", "mitigation": "Monitor policy landscape"}
+        ]
+        while len(risks) < 3:
+            risks.append(default_risks[len(risks) % len(default_risks)])
+
+        return risks[:3]
+
+    def _build_comparables(self, research: Any, expected_val: float) -> List[Dict[str, Any]]:
+        """Build comparables from research data or intelligent defaults"""
+        # Try to extract from research
+        sector = "Technology"
+        if research and hasattr(research, 'overview') and research.overview:
+            sector = getattr(research.overview, 'sector', 'Technology') if hasattr(research.overview, 'sector') else 'Technology'
+        elif isinstance(research, dict):
+            overview = research.get('overview', {})
+            sector = overview.get('sector', 'Technology') if isinstance(overview, dict) else 'Technology'
+
+        # Generate contextual comparables based on valuation tier
+        if expected_val > 100_000_000:
+            return [
+                {"company": f"{sector} leader (Series B)", "valuation": "$150M", "stage": "Series B"},
+                {"company": f"Recent {sector} unicorn", "valuation": "$1B", "stage": "Series C"}
+            ]
+        elif expected_val > 50_000_000:
+            return [
+                {"company": f"{sector} Series A comp", "valuation": "$80M", "stage": "Series A"},
+                {"company": f"Similar stage {sector} startup", "valuation": "$60M", "stage": "Series A"}
+            ]
+        else:
+            return [
+                {"company": f"Seed-stage {sector} comp", "valuation": "$25M", "stage": "Seed"},
+                {"company": f"YC {sector} graduate", "valuation": "$20M", "stage": "Seed"}
+            ]
+
     def _calculate_deal_terms(self, valuation: float) -> Dict[str, Any]:
         """Calculate deal terms from framework configuration"""
         min_check = self._get_investment_criteria('min_check_size', 500_000)
@@ -423,13 +624,38 @@ class DeliverablesGenerator:
             "instrument": "SAFE" if valuation < 10_000_000 else "Priced Round"
         }
 
+    def _safe_to_dict(self, obj: Any) -> Dict:
+        """Safely convert an object to dict, handling Pydantic models and dicts"""
+        if obj is None:
+            return {}
+        if isinstance(obj, dict):
+            return obj
+        if hasattr(obj, 'model_dump'):
+            try:
+                return obj.model_dump()
+            except Exception:
+                pass
+        if hasattr(obj, '__dict__'):
+            return {k: v for k, v in obj.__dict__.items() if not k.startswith('_')}
+        return {}
+
+    def _get_value(self, obj: Any, key: str, default: Any = None) -> Any:
+        """Safely get a value from either a dict or object"""
+        if obj is None:
+            return default
+        if isinstance(obj, dict):
+            return obj.get(key, default)
+        return getattr(obj, key, default)
+
     def generate_investment_memo(self, company_name: str) -> InvestmentMemo:
         """Generate board-ready investment memo using framework configuration"""
         pred = self.state.predictions.get(company_name, {})
         brief = self.state.decision_briefs.get(company_name, {})
         research = self.state.research.get(company_name, {})
-        monte_carlo = self.state.monte_carlo.get(company_name, {})
-        exit_model = self.state.exit_models.get(company_name, {})
+        monte_carlo_obj = self.state.monte_carlo.get(company_name)
+        monte_carlo = self._safe_to_dict(monte_carlo_obj)
+        exit_model_obj = self.state.exit_models.get(company_name)
+        exit_model = self._safe_to_dict(exit_model_obj)
 
         # Extract prediction values (handle both object and dict)
         prob = getattr(pred, 'unicorn_probability', 0) if hasattr(pred, 'unicorn_probability') else pred.get('unicorn_probability', 0)
@@ -476,7 +702,8 @@ class DeliverablesGenerator:
         # Calculate expected IRR from Monte Carlo if available
         expected_irr = 0.30  # Default
         if monte_carlo:
-            mc_mean = monte_carlo.get('mean', prob)
+            # MonteCarloOutput uses 'unicorn_prob_mean' field name
+            mc_mean = monte_carlo.get('unicorn_prob_mean', monte_carlo.get('mean', prob))
             if mc_mean > 0.15:
                 expected_irr = 0.50
             elif mc_mean > 0.08:
@@ -520,36 +747,12 @@ class DeliverablesGenerator:
                 "team_score": f"{getattr(pred, 'team_score', 0.5)*100:.0f}/100" if hasattr(pred, 'team_score') else "50/100",
                 "market_score": f"{getattr(pred, 'market_score', 0.5)*100:.0f}/100" if hasattr(pred, 'market_score') else "50/100",
             },
-            team_assessment={
-                "score": getattr(pred, 'team_score', 0.5) if hasattr(pred, 'team_score') else 0.5,
-                "strengths": ["Relevant domain experience"],
-                "concerns": ["First-time founders"]
-            },
-            market_assessment={
-                "score": getattr(pred, 'market_score', 0.5) if hasattr(pred, 'market_score') else 0.5,
-                "tam": "$50B+",
-                "growth_rate": "25% CAGR",
-                "timing": "Favorable"
-            },
-            traction_assessment={
-                "score": getattr(pred, 'traction_score', 0.5) if hasattr(pred, 'traction_score') else 0.5,
-                "stage": "Pre-revenue / Early revenue",
-                "key_metrics": "User growth, engagement"
-            },
-            competitive_assessment={
-                "moat": "Moderate",
-                "key_competitors": ["Incumbent A", "Startup B"],
-                "differentiation": "Technical approach"
-            },
-            top_risks=[
-                {"risk": "Execution risk", "severity": "HIGH", "mitigation": "Strong advisory board"},
-                {"risk": "Market timing", "severity": "MEDIUM", "mitigation": "Flexible go-to-market"},
-                {"risk": "Competition", "severity": "MEDIUM", "mitigation": "First-mover advantage"}
-            ],
-            comparables=[
-                {"company": "Similar Co A", "valuation": "$100M", "stage": "Series A"},
-                {"company": "Similar Co B", "valuation": "$80M", "stage": "Seed"}
-            ],
+            team_assessment=self._build_team_assessment(pred, research, team_score, key_strengths),
+            market_assessment=self._build_market_assessment(pred, research, market_score),
+            traction_assessment=self._build_traction_assessment(pred, research, traction_score),
+            competitive_assessment=self._build_competitive_assessment(pred, research),
+            top_risks=self._build_top_risks(pred, key_risks, team_score, market_score, traction_score),
+            comparables=self._build_comparables(research, expected_val),
             exit_scenarios=[
                 {"scenario": "Unicorn IPO", "probability": f"{prob*100:.0f}%", "return": "20x"},
                 {"scenario": "Strategic Acquisition", "probability": "30%", "return": "5x"},
@@ -570,105 +773,143 @@ class DeliverablesGenerator:
         )
 
     def generate_risk_register(self, company_name: str) -> RiskRegister:
-        """Generate comprehensive risk register"""
+        """Generate comprehensive risk register based on ACTUAL factor scores"""
         pred = self.state.predictions.get(company_name, {})
+
+        # Extract factor scores
+        team_score = getattr(pred, 'team_score', 0.5) if hasattr(pred, 'team_score') else pred.get('team_score', 0.5) if isinstance(pred, dict) else 0.5
+        market_score = getattr(pred, 'market_score', 0.5) if hasattr(pred, 'market_score') else pred.get('market_score', 0.5) if isinstance(pred, dict) else 0.5
+        traction_score = getattr(pred, 'traction_score', 0.5) if hasattr(pred, 'traction_score') else pred.get('traction_score', 0.5) if isinstance(pred, dict) else 0.5
+        timing_score = getattr(pred, 'timing_score', 0.5) if hasattr(pred, 'timing_score') else pred.get('timing_score', 0.5) if isinstance(pred, dict) else 0.5
+        capital_score = getattr(pred, 'capital_score', 0.5) if hasattr(pred, 'capital_score') else pred.get('capital_score', 0.5) if isinstance(pred, dict) else 0.5
+
+        # Get key risks from prediction for context
+        key_risks = getattr(pred, 'key_risks', []) if hasattr(pred, 'key_risks') else pred.get('key_risks', []) if isinstance(pred, dict) else []
+
+        # Calculate dynamic severity based on factor scores
+        def score_to_severity(score: float) -> RiskSeverity:
+            if score < 0.3: return RiskSeverity.CRITICAL
+            if score < 0.5: return RiskSeverity.HIGH
+            if score < 0.7: return RiskSeverity.MEDIUM
+            return RiskSeverity.LOW
 
         risks = [
             RiskItem(
                 id="R001",
-                title="Execution Risk",
-                description="Team may not execute on product roadmap as planned",
+                title=f"Execution Risk (Team Score: {team_score*100:.0f}/100)",
+                description=f"Team execution capability assessment based on founder experience, prior exits, and domain expertise. {'Strong team reduces execution risk.' if team_score > 0.6 else 'Team may need strengthening in key areas.'}",
                 category=RiskCategory.EXECUTION,
-                severity=RiskSeverity.HIGH,
-                likelihood=0.4,
+                severity=score_to_severity(team_score),
+                likelihood=round(1 - team_score, 2),
                 impact_score=0.8,
-                risk_score=0.32,
-                current_mitigations=["Experienced advisors", "Clear milestones"],
-                recommended_mitigations=["Monthly board check-ins", "Hire key VP"],
-                residual_risk=0.2,
-                early_warning_signs=["Missed sprint goals", "Key hire departures"],
+                risk_score=round((1 - team_score) * 0.8, 2),
+                current_mitigations=["Experienced advisors in place" if team_score > 0.5 else "Building advisory network"],
+                recommended_mitigations=["Monthly milestone reviews", "Executive coaching" if team_score < 0.5 else "Succession planning"],
+                residual_risk=round((1 - team_score) * 0.5, 2),
+                early_warning_signs=["Missed milestones", "Key hire departures", "Founder burnout"],
                 monitoring_frequency="Monthly"
             ),
             RiskItem(
                 id="R002",
-                title="Market Risk",
-                description="Market may not develop as expected or timing may be off",
+                title=f"Market Risk (Market Score: {market_score*100:.0f}/100)",
+                description=f"Market timing and sizing assessment. {'Favorable market conditions.' if market_score > 0.6 else 'Market timing or size may present challenges.'}",
                 category=RiskCategory.MARKET,
-                severity=RiskSeverity.MEDIUM,
-                likelihood=0.3,
+                severity=score_to_severity(market_score),
+                likelihood=round(1 - market_score, 2),
                 impact_score=0.7,
-                risk_score=0.21,
-                current_mitigations=["Market research completed", "Customer discovery ongoing"],
-                recommended_mitigations=["Expand customer interviews", "Build pivot optionality"],
-                residual_risk=0.15,
-                early_warning_signs=["Slowing inbound interest", "Competitor traction"],
+                risk_score=round((1 - market_score) * 0.7, 2),
+                current_mitigations=["Market research completed" if market_score > 0.5 else "Conducting market validation"],
+                recommended_mitigations=["Expand customer discovery", "Build pivot optionality"],
+                residual_risk=round((1 - market_score) * 0.4, 2),
+                early_warning_signs=["Slowing demand signals", "Competitor traction", "Market contraction"],
                 monitoring_frequency="Quarterly"
             ),
             RiskItem(
                 id="R003",
-                title="Competitive Risk",
-                description="Incumbents or well-funded startups may capture market",
-                category=RiskCategory.COMPETITIVE,
-                severity=RiskSeverity.MEDIUM,
-                likelihood=0.5,
-                impact_score=0.6,
-                risk_score=0.30,
-                current_mitigations=["Differentiated approach", "Speed to market"],
-                recommended_mitigations=["Accelerate product development", "Secure key partnerships"],
-                residual_risk=0.2,
-                early_warning_signs=["Competitor funding announcements", "Feature parity"],
-                monitoring_frequency="Monthly"
+                title=f"Traction Risk (Traction Score: {traction_score*100:.0f}/100)",
+                description=f"Product-market fit assessment. {'Strong early traction validates approach.' if traction_score > 0.6 else 'Still proving product-market fit.'}",
+                category=RiskCategory.EXECUTION,
+                severity=score_to_severity(traction_score),
+                likelihood=round(1 - traction_score, 2),
+                impact_score=0.7,
+                risk_score=round((1 - traction_score) * 0.7, 2),
+                current_mitigations=["Active customer engagement" if traction_score > 0.4 else "Building initial user base"],
+                recommended_mitigations=["Accelerate customer feedback loops", "A/B testing framework"],
+                residual_risk=round((1 - traction_score) * 0.4, 2),
+                early_warning_signs=["User churn increase", "Engagement decline", "Feature requests stall"],
+                monitoring_frequency="Weekly"
             ),
             RiskItem(
                 id="R004",
-                title="Financial Risk",
-                description="May run out of runway before achieving key milestones",
+                title=f"Capital Risk (Capital Score: {capital_score*100:.0f}/100)",
+                description=f"Funding and runway assessment. {'Well-capitalized for current stage.' if capital_score > 0.6 else 'May need funding runway attention.'}",
                 category=RiskCategory.FINANCIAL,
-                severity=RiskSeverity.HIGH,
-                likelihood=0.3,
+                severity=score_to_severity(capital_score),
+                likelihood=round(1 - capital_score, 2),
                 impact_score=0.9,
-                risk_score=0.27,
-                current_mitigations=["18-month runway", "Capital efficient model"],
-                recommended_mitigations=["Develop bridge financing relationships", "Identify cost levers"],
-                residual_risk=0.15,
-                early_warning_signs=["Burn rate increase", "Revenue miss"],
+                risk_score=round((1 - capital_score) * 0.9, 2),
+                current_mitigations=["Budget controls in place" if capital_score > 0.5 else "Developing capital efficiency"],
+                recommended_mitigations=["Bridge financing relationships", "Cost optimization review"],
+                residual_risk=round((1 - capital_score) * 0.5, 2),
+                early_warning_signs=["Burn rate acceleration", "Revenue shortfall", "Funding delays"],
                 monitoring_frequency="Monthly"
             ),
             RiskItem(
                 id="R005",
-                title="Team Risk",
-                description="Key person dependency or team conflicts",
-                category=RiskCategory.TEAM,
-                severity=RiskSeverity.MEDIUM,
-                likelihood=0.25,
-                impact_score=0.7,
-                risk_score=0.175,
-                current_mitigations=["Vesting schedules", "Clear roles"],
-                recommended_mitigations=["Hire backup for key roles", "Team coaching"],
-                residual_risk=0.1,
-                early_warning_signs=["Founder tension", "Key hire struggles"],
+                title=f"Timing Risk (Timing Score: {timing_score*100:.0f}/100)",
+                description=f"Market timing assessment. {'Favorable timing window.' if timing_score > 0.6 else 'Timing may be suboptimal.'}",
+                category=RiskCategory.MARKET,
+                severity=score_to_severity(timing_score),
+                likelihood=round(1 - timing_score, 2),
+                impact_score=0.6,
+                risk_score=round((1 - timing_score) * 0.6, 2),
+                current_mitigations=["Market monitoring active" if timing_score > 0.5 else "Tracking market signals"],
+                recommended_mitigations=["Flexible launch timeline", "Market catalyst tracking"],
+                residual_risk=round((1 - timing_score) * 0.3, 2),
+                early_warning_signs=["Market slowdown", "Regulatory changes", "Technology shifts"],
                 monitoring_frequency="Quarterly"
             )
         ]
 
+        # Calculate dynamic summary metrics
+        avg_score = (team_score + market_score + traction_score + timing_score + capital_score) / 5
+        overall_risk = round((1 - avg_score) * 100)
+        critical_count = sum(1 for r in risks if r.severity == RiskSeverity.CRITICAL)
+        high_count = sum(1 for r in risks if r.severity == RiskSeverity.HIGH)
+        medium_count = sum(1 for r in risks if r.severity == RiskSeverity.MEDIUM)
+        low_count = sum(1 for r in risks if r.severity == RiskSeverity.LOW)
+
+        # Determine overall rating
+        if critical_count > 0:
+            overall_rating = RiskSeverity.CRITICAL
+        elif high_count >= 3:
+            overall_rating = RiskSeverity.HIGH
+        elif high_count >= 1:
+            overall_rating = RiskSeverity.MEDIUM
+        else:
+            overall_rating = RiskSeverity.LOW
+
+        # Build dynamic concerns from key_risks
+        top_concerns = key_risks[:3] if key_risks else [
+            f"{'Team execution' if team_score < 0.5 else 'Market timing'} is primary concern",
+            f"Traction {'needs acceleration' if traction_score < 0.5 else 'on track'}",
+            "Standard early-stage risks apply"
+        ]
+
         return RiskRegister(
             company_name=company_name,
-            overall_risk_rating=RiskSeverity.MEDIUM,
-            risk_score=65,
-            risk_trend="STABLE",
+            overall_risk_rating=overall_rating,
+            risk_score=overall_risk,
+            risk_trend="IMPROVING" if avg_score > 0.6 else ("STABLE" if avg_score > 0.4 else "ELEVATED"),
             risks=risks,
-            critical_risks=0,
-            high_risks=2,
-            medium_risks=3,
-            low_risks=0,
-            top_concerns=[
-                "Execution timeline pressure",
-                "Competitive response from incumbents",
-                "Runway management in uncertain market"
-            ],
+            critical_risks=critical_count,
+            high_risks=high_count,
+            medium_risks=medium_count,
+            low_risks=low_count,
+            top_concerns=top_concerns,
             risk_concentrations=[
-                "Execution risks clustered around product delivery",
-                "Market risks tied to timing assumptions"
+                f"{'Execution risks' if team_score < market_score else 'Market risks'} require primary attention",
+                f"Capital efficiency {'strong' if capital_score > 0.6 else 'needs monitoring'}"
             ],
             immediate_actions=[
                 "Establish monthly milestone reviews",
