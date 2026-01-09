@@ -1086,6 +1086,61 @@ const api = {
       const res = await fetch(`${API_URL}/api/nodes/health`)
       return res.json()
     }
+  },
+
+  // ========== GRAPH EXECUTION API (NEW - Proper Data Flow) ==========
+  graph: {
+    // List all nodes and dependencies
+    listNodes: async () => {
+      const res = await fetch(`${API_URL}/api/graph/nodes`)
+      return res.json()
+    },
+
+    // Execute full graph synchronously (blocks until complete)
+    executeSync: async (batchCode: string, maxCompanies = 5) => {
+      const res = await fetch(`${API_URL}/api/graph/execute/sync`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          batch_code: batchCode,
+          accelerator: 'YC',
+          max_companies: maxCompanies
+        })
+      })
+      return res.json()
+    },
+
+    // Execute graph asynchronously (returns immediately, poll for status)
+    execute: async (batchCode: string, maxCompanies = 5) => {
+      const res = await fetch(`${API_URL}/api/graph/execute`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          batch_code: batchCode,
+          accelerator: 'YC',
+          max_companies: maxCompanies
+        })
+      })
+      return res.json()
+    },
+
+    // Get execution status
+    getStatus: async (executionId: string) => {
+      const res = await fetch(`${API_URL}/api/graph/status/${executionId}`)
+      return res.json()
+    },
+
+    // Get full results after completion
+    getResults: async (executionId: string, includeFullState = false) => {
+      const res = await fetch(`${API_URL}/api/graph/results/${executionId}?include_full_state=${includeFullState}`)
+      return res.json()
+    },
+
+    // Quick demo endpoint
+    demo: async () => {
+      const res = await fetch(`${API_URL}/api/graph/demo`)
+      return res.json()
+    }
   }
 }
 
@@ -1690,7 +1745,8 @@ export default function CanvasPage() {
     setShowNodeDetail(true)
   }
 
-  // Run batch analysis - full pipeline with real node APIs
+  // Run batch analysis using the Graph Execution Engine
+  // This runs all nodes in proper dependency order with state accumulation
   const runBatchAnalysis = async () => {
     setIsResearching(true)
     setShowResults(false)
@@ -1706,166 +1762,155 @@ export default function CanvasPage() {
       setNodes(prev => prev.map(n => nodeIds.includes(n.id) ? { ...n, status } : n))
     }
 
+    // Graph execution order - nodes run in this sequence with data flowing between them
+    const executionOrder = [
+      'batch', 'research', 'market_scanner', 'alternative_data',
+      'financial_signals', 'network_graph', 'historical_outcomes',
+      'prediction', 'monte_carlo', 'sensitivity',
+      'trajectory_sim', 'exit_modeler', 'funding_scenarios',
+      'decision_brief', 'comparison_matrix', 'portfolio_optimizer'
+    ]
+
     try {
-      // ========== STAGE 1: INPUT NODES ==========
-      console.log('[Pipeline] Starting input stage...')
+      console.log('[GraphPipeline] Starting full graph execution...')
+      console.log('[GraphPipeline] Batch:', batchCode, '| Using Graph API with state accumulation')
 
-      // 1.1 Batch Analysis (primary data source)
-      updateNodeStatus('batch', 'running')
-      const batchResult = await api.analyzeYCBatch(batchCode, 8)
-      updateNodeStatus('batch', 'complete')
-      updateNodeStatus('research', 'complete') // Research happens in batch
+      // Start async execution
+      const execResponse = await api.graph.execute(batchCode, 5)
+      const executionId = execResponse.execution_id
+      console.log('[GraphPipeline] Execution started:', executionId)
 
-      // 1.2 Parallel input node calls
-      updateNodesStatus(['market_scanner', 'financial_signals', 'historical_outcomes'], 'running')
+      // Poll for status and update node visualizations
+      let completed = false
+      let lastCompletedCount = 0
 
-      const [marketData, financialData, historicalData] = await Promise.all([
-        api.nodes.marketScanner('AI/developer tools', batchResult.startups?.map((s: any) => s.startup_name) || []),
-        api.nodes.financialSignals('AI/developer tools', 'seed'),
-        api.nodes.historicalOutcomes('YC')
-      ])
+      while (!completed) {
+        await new Promise(resolve => setTimeout(resolve, 500)) // Poll every 500ms
 
-      updateNodesStatus(['market_scanner', 'financial_signals', 'historical_outcomes'], 'complete')
+        const status = await api.graph.getStatus(executionId)
+        console.log('[GraphPipeline] Status:', status.status, '| Progress:', (status.progress * 100).toFixed(0) + '%')
 
-      // 1.3 Alternative data and network graph (depend on company list)
-      updateNodesStatus(['alternative_data', 'network_graph'], 'running')
+        // Update node statuses based on completion
+        const completedNodes = status.nodes_completed || []
 
-      const companyNames = batchResult.startups?.map((s: any) => s.startup_name) || []
-      const [altData, networkData] = await Promise.all([
-        companyNames.length > 0 ? api.nodes.alternativeData(companyNames[0]) : Promise.resolve(null),
-        api.nodes.networkGraph(companyNames.slice(0, 5))
-      ])
+        // Mark newly completed nodes
+        if (completedNodes.length > lastCompletedCount) {
+          for (const nodeId of completedNodes) {
+            updateNodeStatus(nodeId, 'complete')
+          }
+          lastCompletedCount = completedNodes.length
 
-      updateNodesStatus(['alternative_data', 'network_graph'], 'complete')
+          // Mark next node as running
+          const nextNodeIndex = completedNodes.length
+          if (nextNodeIndex < executionOrder.length) {
+            const nextNode = executionOrder[nextNodeIndex]
+            if (nextNode) {
+              updateNodeStatus(nextNode, 'running')
+            }
+          }
+        }
 
-      console.log('[Pipeline] Input stage complete. Data collected:', {
-        companies: batchResult.startups?.length,
-        marketPhase: marketData?.output?.market_cycle_phase,
-        unicornRate: historicalData?.output?.unicorn_rate
-      })
+        // Also update output nodes progress
+        if (status.progress > 0.8) {
+          updateNodesStatus(['chat', 'investment_memo', 'risk_report', 'portfolio_dashboard', 'alert_system', 'stakeholder_views', 'whatif_explorer', 'timeline_projection'], 'running')
+        }
 
-      // ========== STAGE 2: ANALYSIS NODES ==========
-      console.log('[Pipeline] Starting analysis stage...')
-
-      updateNodeStatus('prediction', 'complete') // Prediction done in batch
-
-      // 2.1 Run Monte Carlo and Sensitivity in parallel
-      updateNodesStatus(['monte_carlo', 'sensitivity'], 'running')
-
-      const topPrediction = batchResult.startups?.[0] || {}
-      const [monteCarloResult, sensitivityResult] = await Promise.all([
-        api.nodes.monteCarlo(topPrediction),
-        api.nodes.sensitivity(topPrediction)
-      ])
-
-      updateNodesStatus(['monte_carlo', 'sensitivity'], 'complete')
-
-      // 2.2 Cohort comparison and risk decomposition
-      updateNodesStatus(['cohort_comparison', 'risk_decomposition'], 'running')
-
-      const [cohortResult, riskResult] = await Promise.all([
-        api.nodes.cohortComparison(`YC ${batchCode}`, batchResult.startups || []),
-        api.nodes.riskDecomposition(topPrediction)
-      ])
-
-      updateNodesStatus(['cohort_comparison', 'risk_decomposition'], 'complete')
-
-      // 2.3 Market timing and competitive dynamics
-      updateNodesStatus(['market_timing', 'competitive_dynamics'], 'running')
-
-      const marketTimingResult = await api.nodes.marketTiming('AI/developer tools')
-
-      updateNodesStatus(['market_timing', 'competitive_dynamics'], 'complete')
-
-      // 2.4 Portfolio optimizer and scenario planner
-      updateNodesStatus(['portfolio_optimizer', 'scenario_planner'], 'running')
-
-      const portfolioResult = await api.nodes.portfolioOptimizer(batchResult.startups || [])
-
-      updateNodesStatus(['portfolio_optimizer', 'scenario_planner'], 'complete')
-
-      console.log('[Pipeline] Analysis stage complete:', {
-        monteCarloMean: monteCarloResult?.output?.unicorn_probability?.mean,
-        cohortPercentile: cohortResult?.output?.percentile_rank,
-        portfolioSharpe: portfolioResult?.output?.sharpe_ratio
-      })
-
-      // ========== STAGE 3: SIMULATION NODES ==========
-      console.log('[Pipeline] Starting simulation stage...')
-
-      updateNodesStatus(['trajectory_sim', 'exit_modeler', 'funding_scenarios'], 'running')
-
-      const [trajectoryResult, exitResult, fundingResult] = await Promise.all([
-        api.nodes.trajectorySim(topPrediction, topPrediction),
-        api.nodes.exitModeler(topPrediction),
-        api.nodes.fundingScenarios(topPrediction.expected_valuation || 15000000)
-      ])
-
-      updateNodesStatus(['trajectory_sim', 'exit_modeler', 'funding_scenarios'], 'complete')
-
-      console.log('[Pipeline] Simulation stage complete:', {
-        exitProbs: exitResult?.output?.exit_probabilities,
-        fundingRounds: fundingResult?.output?.future_rounds?.length
-      })
-
-      // ========== STAGE 4: OUTPUT NODES ==========
-      console.log('[Pipeline] Starting output stage...')
-
-      updateNodesStatus([
-        'chat', 'decision_brief', 'investment_memo', 'risk_report',
-        'comparison_matrix', 'portfolio_dashboard', 'alert_system',
-        'stakeholder_views', 'whatif_explorer', 'timeline_projection'
-      ], 'running')
-
-      // Generate outputs in parallel
-      const [decisionBrief, comparisonMatrix, timelineResult] = await Promise.all([
-        api.nodes.decisionBrief(topPrediction.startup_name || 'Company', topPrediction),
-        api.nodes.comparisonMatrix(batchResult.startups || []),
-        api.nodes.timelineProjection(topPrediction.startup_name || 'Company', topPrediction)
-      ])
-
-      updateNodesStatus([
-        'chat', 'decision_brief', 'investment_memo', 'risk_report',
-        'comparison_matrix', 'portfolio_dashboard', 'alert_system',
-        'stakeholder_views', 'whatif_explorer', 'timeline_projection'
-      ], 'complete')
-
-      console.log('[Pipeline] Output stage complete:', {
-        recommendation: decisionBrief?.output?.recommendation,
-        milestones: timelineResult?.output?.milestones?.length
-      })
-
-      // ========== COMPLETE ==========
-      console.log('[Pipeline] Full pipeline complete!')
-
-      // Enhance batch result with node outputs
-      const enhancedResult = {
-        ...batchResult,
-        node_outputs: {
-          market_scanner: marketData?.output,
-          financial_signals: financialData?.output,
-          historical_outcomes: historicalData?.output,
-          network_graph: networkData?.output,
-          monte_carlo: monteCarloResult?.output,
-          sensitivity: sensitivityResult?.output,
-          cohort_comparison: cohortResult?.output,
-          risk_decomposition: riskResult?.output,
-          market_timing: marketTimingResult?.output,
-          portfolio_optimizer: portfolioResult?.output,
-          trajectory_sim: trajectoryResult?.output,
-          exit_modeler: exitResult?.output,
-          funding_scenarios: fundingResult?.output,
-          decision_brief: decisionBrief?.output,
-          comparison_matrix: comparisonMatrix?.output,
-          timeline_projection: timelineResult?.output
+        if (status.status === 'completed' || status.status === 'failed') {
+          completed = true
+          if (status.status === 'failed') {
+            throw new Error('Graph execution failed')
+          }
         }
       }
+
+      // Mark all output nodes complete
+      updateNodesStatus([
+        'chat', 'decision_brief', 'investment_memo', 'risk_report',
+        'comparison_matrix', 'portfolio_dashboard', 'alert_system',
+        'stakeholder_views', 'whatif_explorer', 'timeline_projection',
+        'cohort_comparison', 'risk_decomposition', 'market_timing',
+        'competitive_dynamics', 'scenario_planner'
+      ], 'complete')
+
+      // Fetch full results
+      console.log('[GraphPipeline] Fetching full results...')
+      const results = await api.graph.getResults(executionId, true)
+      console.log('[GraphPipeline] Results received:', {
+        companies: results.companies?.length,
+        predictions: Object.keys(results.predictions || {}).length,
+        success: results.success
+      })
+
+      // Transform graph results to batch prediction format
+      const startups = results.companies?.map((companyName: string) => {
+        const pred = results.predictions?.[companyName] || {}
+        const brief = results.decision_briefs?.[companyName] || {}
+        return {
+          startup_id: companyName.toLowerCase().replace(/\s+/g, '_'),
+          startup_name: companyName,
+          unicorn_probability: pred.unicorn_probability || 0,
+          centaur_probability: pred.centaur_probability || 0,
+          success_probability: pred.success_probability || 0,
+          failure_probability: pred.failure_probability || 0,
+          expected_valuation: pred.expected_valuation || 0,
+          valuation_p10: pred.expected_valuation * 0.3 || 0,
+          valuation_p50: pred.expected_valuation * 0.7 || 0,
+          valuation_p90: pred.expected_valuation * 2.5 || 0,
+          team_score: pred.team_score || 0.5,
+          market_score: pred.market_score || 0.5,
+          traction_score: pred.traction_score || 0.5,
+          timing_score: pred.timing_score || 0.5,
+          capital_score: pred.capital_score || 0.5,
+          key_strengths: pred.key_strengths || [],
+          key_risks: pred.key_risks || [],
+          detailed_reasoning: brief.summary || '',
+          prediction_confidence: pred.prediction_confidence || 0.5,
+          data_quality: 'high',
+          recommendation: brief.recommendation || 'MONITOR',
+          percentile_rank: brief.percentile_rank || 50,
+          years_to_exit: 7
+        }
+      }) || []
+
+      // Sort by unicorn probability
+      startups.sort((a: any, b: any) => b.unicorn_probability - a.unicorn_probability)
+
+      // Calculate batch-level stats
+      const totalUnicornProb = startups.reduce((sum: number, s: any) => sum + s.unicorn_probability, 0)
+      const totalValue = startups.reduce((sum: number, s: any) => sum + s.expected_valuation, 0)
+
+      const enhancedResult = {
+        batch_name: `YC ${batchCode}`,
+        batch_size: startups.length,
+        expected_unicorns: totalUnicornProb,
+        unicorn_range: [totalUnicornProb * 0.5, totalUnicornProb * 1.5] as [number, number],
+        expected_centaurs: startups.reduce((sum: number, s: any) => sum + s.centaur_probability, 0),
+        expected_total_value: totalValue / 1e9, // In billions
+        startups,
+        top_unicorn_candidates: startups.slice(0, 3).map((s: any) => s.startup_name),
+        highest_risk_startups: startups.slice(-2).map((s: any) => s.startup_name),
+        batch_quality_score: startups.reduce((sum: number, s: any) => sum + s.prediction_confidence, 0) / startups.length,
+        market_timing_score: startups[0]?.timing_score || 0.5,
+        graph_execution: {
+          execution_id: executionId,
+          total_time_ms: results.total_time_ms,
+          nodes_completed: results.nodes_completed,
+          comparison_matrix: results.comparison_matrix,
+          portfolio_analysis: results.portfolio_analysis
+        }
+      }
+
+      console.log('[GraphPipeline] Pipeline complete!', {
+        totalTime: results.total_time_ms + 'ms',
+        nodesCompleted: results.nodes_completed?.length,
+        companiesAnalyzed: startups.length
+      })
 
       setBatchPrediction(enhancedResult)
       setShowResults(true)
 
     } catch (error) {
-      console.error('[Pipeline] Analysis failed:', error)
+      console.error('[GraphPipeline] Analysis failed:', error)
       setNodes(prev => prev.map(n => n.status === 'running' ? { ...n, status: 'error' } : n))
     }
 
