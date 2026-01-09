@@ -26,7 +26,20 @@
       "Bash(git init:*)",
       "Bash(git commit -m \"$(cat <<''EOF''\nInitial commit: RLTX Populous - Decision Intelligence Platform\n\nFrontend (Next.js):\n- Projects dashboard with filters and 2-column grid\n- Survey Builder with 3-panel layout (Questions, Preview, Predictions)\n- Audiences management with profile generation\n- Templates library\n- Custom design system matching Figma designs\n\nBackend (FastAPI):\n- Projects, Audiences, Surveys CRUD APIs\n- AI-powered question suggestions and bias detection\n- Monte Carlo simulation engine for decision intelligence\n- Synthetic profile generation\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")",
       "Bash(git commit -m \"$(cat <<''EOF''\nAdd Railway deployment configuration\n\n- Add railway.json, Procfile, nixpacks.toml for backend\n- Add railway.json for frontend\n- Configure proper start commands and health checks\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n\nCo-Authored-By: Claude Opus 4.5 <noreply@anthropic.com>\nEOF\n)\")",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "WebFetch(domain:rltx.ai)",
+      "WebFetch(domain:github.com)",
+      "Bash(~/.zshrc)",
+      "Bash(export PATH=\"$HOME/.local/bin:$PATH\")",
+      "Bash(brew install:*)",
+      "Bash(PYTHONPATH=. python:*)",
+      "Bash(PYTHONPATH=. python3:*)",
+      "Bash(npm install:*)",
+      "Bash(railway link:*)",
+      "Bash(pip3 install:*)",
+      "Bash(railway login:*)",
+      "Bash(export RAILWAY_TOKEN=\"5d0a0621-f0fd-40b5-acd0-dee56879275c\")",
+      "Bash(railway whoami:*)"
     ]
   }
 }
