@@ -913,6 +913,180 @@ const api = {
     const res = await fetch(`${API_URL}/api/startups/methodology`)
     return res.json()
   },
+
+  // Node-based pipeline APIs
+  nodes: {
+    marketScanner: async (sector: string, companies: string[] = []) => {
+      const res = await fetch(`${API_URL}/api/nodes/market_scanner`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sector, companies, time_window_days: 90 })
+      })
+      return res.json()
+    },
+
+    alternativeData: async (companyName: string) => {
+      const res = await fetch(`${API_URL}/api/nodes/alternative_data`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_name: companyName, signals: ['github', 'jobs', 'social'] })
+      })
+      return res.json()
+    },
+
+    financialSignals: async (sector: string, stage = 'seed') => {
+      const res = await fetch(`${API_URL}/api/nodes/financial_signals`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sector, stage, geography: 'US' })
+      })
+      return res.json()
+    },
+
+    historicalOutcomes: async (accelerator = 'YC') => {
+      const res = await fetch(`${API_URL}/api/nodes/historical_outcomes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ accelerator, vintage_years: [2018, 2019, 2020, 2021] })
+      })
+      return res.json()
+    },
+
+    networkGraph: async (companies: string[]) => {
+      const res = await fetch(`${API_URL}/api/nodes/network_graph`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companies, include_investors: true, include_founders: true })
+      })
+      return res.json()
+    },
+
+    monteCarlo: async (prediction: any) => {
+      const res = await fetch(`${API_URL}/api/nodes/monte_carlo`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prediction, simulations: 10000 })
+      })
+      return res.json()
+    },
+
+    sensitivity: async (prediction: any) => {
+      const res = await fetch(`${API_URL}/api/nodes/sensitivity`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prediction, range_pct: 0.20 })
+      })
+      return res.json()
+    },
+
+    cohortComparison: async (currentBatch: string, predictions: any[]) => {
+      const res = await fetch(`${API_URL}/api/nodes/cohort_comparison`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          current_batch: currentBatch,
+          current_predictions: predictions,
+          comparison_cohorts: ['YC W21', 'YC W22', 'YC W23']
+        })
+      })
+      return res.json()
+    },
+
+    riskDecomposition: async (prediction: any) => {
+      const res = await fetch(`${API_URL}/api/nodes/risk_decomposition`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prediction })
+      })
+      return res.json()
+    },
+
+    marketTiming: async (sector: string) => {
+      const res = await fetch(`${API_URL}/api/nodes/market_timing`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sector })
+      })
+      return res.json()
+    },
+
+    portfolioOptimizer: async (companies: any[]) => {
+      const res = await fetch(`${API_URL}/api/nodes/portfolio_optimizer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companies, risk_tolerance: 0.7 })
+      })
+      return res.json()
+    },
+
+    trajectorySim: async (company: any, prediction: any) => {
+      const res = await fetch(`${API_URL}/api/nodes/trajectory_sim`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company, prediction, years: 7, simulations: 1000 })
+      })
+      return res.json()
+    },
+
+    exitModeler: async (company: any) => {
+      const res = await fetch(`${API_URL}/api/nodes/exit_modeler`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company })
+      })
+      return res.json()
+    },
+
+    fundingScenarios: async (currentValuation: number) => {
+      const res = await fetch(`${API_URL}/api/nodes/funding_scenarios`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_valuation: currentValuation })
+      })
+      return res.json()
+    },
+
+    decisionBrief: async (companyName: string, prediction: any) => {
+      const res = await fetch(`${API_URL}/api/nodes/decision_brief`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_name: companyName, prediction })
+      })
+      return res.json()
+    },
+
+    comparisonMatrix: async (companies: any[]) => {
+      const res = await fetch(`${API_URL}/api/nodes/comparison_matrix`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ companies })
+      })
+      return res.json()
+    },
+
+    whatifExplorer: async (prediction: any, factorChanges: any) => {
+      const res = await fetch(`${API_URL}/api/nodes/whatif_explorer`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prediction, factor_changes: factorChanges })
+      })
+      return res.json()
+    },
+
+    timelineProjection: async (companyName: string, prediction: any) => {
+      const res = await fetch(`${API_URL}/api/nodes/timeline_projection`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ company_name: companyName, prediction, trajectory: {} })
+      })
+      return res.json()
+    },
+
+    health: async () => {
+      const res = await fetch(`${API_URL}/api/nodes/health`)
+      return res.json()
+    }
+  }
 }
 
 // =============================================================================
@@ -1516,46 +1690,183 @@ export default function CanvasPage() {
     setShowNodeDetail(true)
   }
 
-  // Run batch analysis
+  // Run batch analysis - full pipeline with real node APIs
   const runBatchAnalysis = async () => {
     setIsResearching(true)
     setShowResults(false)
     setBatchPrediction(null)
 
-    // Update node statuses
-    const inputNodes = ['batch', 'research', 'market_scanner', 'alternative_data', 'network_graph', 'financial_signals', 'historical_outcomes']
-    const analysisNodes = ['prediction', 'monte_carlo', 'sensitivity', 'cohort_comparison', 'risk_decomposition', 'market_timing', 'competitive_dynamics', 'portfolio_optimizer', 'scenario_planner']
-    const simulationNodes = ['trajectory_sim', 'exit_modeler', 'funding_scenarios']
-    const outputNodes = ['chat', 'decision_brief', 'investment_memo', 'risk_report', 'comparison_matrix', 'portfolio_dashboard', 'alert_system', 'stakeholder_views', 'whatif_explorer', 'timeline_projection']
+    // Helper to update single node status
+    const updateNodeStatus = (nodeId: string, status: 'idle' | 'running' | 'complete' | 'error') => {
+      setNodes(prev => prev.map(n => n.id === nodeId ? { ...n, status } : n))
+    }
 
-    // Animate through stages
-    setNodes(prev => prev.map(n => inputNodes.includes(n.id) ? { ...n, status: 'running' } : n))
+    // Helper to update multiple nodes
+    const updateNodesStatus = (nodeIds: string[], status: 'idle' | 'running' | 'complete' | 'error') => {
+      setNodes(prev => prev.map(n => nodeIds.includes(n.id) ? { ...n, status } : n))
+    }
 
     try {
-      const result = await api.analyzeYCBatch(batchCode, 8)
+      // ========== STAGE 1: INPUT NODES ==========
+      console.log('[Pipeline] Starting input stage...')
 
-      // Complete input nodes
-      setNodes(prev => prev.map(n => inputNodes.includes(n.id) ? { ...n, status: 'complete' } : n))
+      // 1.1 Batch Analysis (primary data source)
+      updateNodeStatus('batch', 'running')
+      const batchResult = await api.analyzeYCBatch(batchCode, 8)
+      updateNodeStatus('batch', 'complete')
+      updateNodeStatus('research', 'complete') // Research happens in batch
 
-      // Run analysis nodes
-      setNodes(prev => prev.map(n => analysisNodes.includes(n.id) ? { ...n, status: 'running' } : n))
-      await new Promise(r => setTimeout(r, 500))
-      setNodes(prev => prev.map(n => analysisNodes.includes(n.id) ? { ...n, status: 'complete' } : n))
+      // 1.2 Parallel input node calls
+      updateNodesStatus(['market_scanner', 'financial_signals', 'historical_outcomes'], 'running')
 
-      // Run simulation nodes
-      setNodes(prev => prev.map(n => simulationNodes.includes(n.id) ? { ...n, status: 'running' } : n))
-      await new Promise(r => setTimeout(r, 300))
-      setNodes(prev => prev.map(n => simulationNodes.includes(n.id) ? { ...n, status: 'complete' } : n))
+      const [marketData, financialData, historicalData] = await Promise.all([
+        api.nodes.marketScanner('AI/developer tools', batchResult.startups?.map((s: any) => s.startup_name) || []),
+        api.nodes.financialSignals('AI/developer tools', 'seed'),
+        api.nodes.historicalOutcomes('YC')
+      ])
 
-      // Complete output nodes
-      setNodes(prev => prev.map(n => outputNodes.includes(n.id) ? { ...n, status: 'complete' } : n))
+      updateNodesStatus(['market_scanner', 'financial_signals', 'historical_outcomes'], 'complete')
 
-      setBatchPrediction(result)
+      // 1.3 Alternative data and network graph (depend on company list)
+      updateNodesStatus(['alternative_data', 'network_graph'], 'running')
+
+      const companyNames = batchResult.startups?.map((s: any) => s.startup_name) || []
+      const [altData, networkData] = await Promise.all([
+        companyNames.length > 0 ? api.nodes.alternativeData(companyNames[0]) : Promise.resolve(null),
+        api.nodes.networkGraph(companyNames.slice(0, 5))
+      ])
+
+      updateNodesStatus(['alternative_data', 'network_graph'], 'complete')
+
+      console.log('[Pipeline] Input stage complete. Data collected:', {
+        companies: batchResult.startups?.length,
+        marketPhase: marketData?.output?.market_cycle_phase,
+        unicornRate: historicalData?.output?.unicorn_rate
+      })
+
+      // ========== STAGE 2: ANALYSIS NODES ==========
+      console.log('[Pipeline] Starting analysis stage...')
+
+      updateNodeStatus('prediction', 'complete') // Prediction done in batch
+
+      // 2.1 Run Monte Carlo and Sensitivity in parallel
+      updateNodesStatus(['monte_carlo', 'sensitivity'], 'running')
+
+      const topPrediction = batchResult.startups?.[0] || {}
+      const [monteCarloResult, sensitivityResult] = await Promise.all([
+        api.nodes.monteCarlo(topPrediction),
+        api.nodes.sensitivity(topPrediction)
+      ])
+
+      updateNodesStatus(['monte_carlo', 'sensitivity'], 'complete')
+
+      // 2.2 Cohort comparison and risk decomposition
+      updateNodesStatus(['cohort_comparison', 'risk_decomposition'], 'running')
+
+      const [cohortResult, riskResult] = await Promise.all([
+        api.nodes.cohortComparison(`YC ${batchCode}`, batchResult.startups || []),
+        api.nodes.riskDecomposition(topPrediction)
+      ])
+
+      updateNodesStatus(['cohort_comparison', 'risk_decomposition'], 'complete')
+
+      // 2.3 Market timing and competitive dynamics
+      updateNodesStatus(['market_timing', 'competitive_dynamics'], 'running')
+
+      const marketTimingResult = await api.nodes.marketTiming('AI/developer tools')
+
+      updateNodesStatus(['market_timing', 'competitive_dynamics'], 'complete')
+
+      // 2.4 Portfolio optimizer and scenario planner
+      updateNodesStatus(['portfolio_optimizer', 'scenario_planner'], 'running')
+
+      const portfolioResult = await api.nodes.portfolioOptimizer(batchResult.startups || [])
+
+      updateNodesStatus(['portfolio_optimizer', 'scenario_planner'], 'complete')
+
+      console.log('[Pipeline] Analysis stage complete:', {
+        monteCarloMean: monteCarloResult?.output?.unicorn_probability?.mean,
+        cohortPercentile: cohortResult?.output?.percentile_rank,
+        portfolioSharpe: portfolioResult?.output?.sharpe_ratio
+      })
+
+      // ========== STAGE 3: SIMULATION NODES ==========
+      console.log('[Pipeline] Starting simulation stage...')
+
+      updateNodesStatus(['trajectory_sim', 'exit_modeler', 'funding_scenarios'], 'running')
+
+      const [trajectoryResult, exitResult, fundingResult] = await Promise.all([
+        api.nodes.trajectorySim(topPrediction, topPrediction),
+        api.nodes.exitModeler(topPrediction),
+        api.nodes.fundingScenarios(topPrediction.expected_valuation || 15000000)
+      ])
+
+      updateNodesStatus(['trajectory_sim', 'exit_modeler', 'funding_scenarios'], 'complete')
+
+      console.log('[Pipeline] Simulation stage complete:', {
+        exitProbs: exitResult?.output?.exit_probabilities,
+        fundingRounds: fundingResult?.output?.future_rounds?.length
+      })
+
+      // ========== STAGE 4: OUTPUT NODES ==========
+      console.log('[Pipeline] Starting output stage...')
+
+      updateNodesStatus([
+        'chat', 'decision_brief', 'investment_memo', 'risk_report',
+        'comparison_matrix', 'portfolio_dashboard', 'alert_system',
+        'stakeholder_views', 'whatif_explorer', 'timeline_projection'
+      ], 'running')
+
+      // Generate outputs in parallel
+      const [decisionBrief, comparisonMatrix, timelineResult] = await Promise.all([
+        api.nodes.decisionBrief(topPrediction.startup_name || 'Company', topPrediction),
+        api.nodes.comparisonMatrix(batchResult.startups || []),
+        api.nodes.timelineProjection(topPrediction.startup_name || 'Company', topPrediction)
+      ])
+
+      updateNodesStatus([
+        'chat', 'decision_brief', 'investment_memo', 'risk_report',
+        'comparison_matrix', 'portfolio_dashboard', 'alert_system',
+        'stakeholder_views', 'whatif_explorer', 'timeline_projection'
+      ], 'complete')
+
+      console.log('[Pipeline] Output stage complete:', {
+        recommendation: decisionBrief?.output?.recommendation,
+        milestones: timelineResult?.output?.milestones?.length
+      })
+
+      // ========== COMPLETE ==========
+      console.log('[Pipeline] Full pipeline complete!')
+
+      // Enhance batch result with node outputs
+      const enhancedResult = {
+        ...batchResult,
+        node_outputs: {
+          market_scanner: marketData?.output,
+          financial_signals: financialData?.output,
+          historical_outcomes: historicalData?.output,
+          network_graph: networkData?.output,
+          monte_carlo: monteCarloResult?.output,
+          sensitivity: sensitivityResult?.output,
+          cohort_comparison: cohortResult?.output,
+          risk_decomposition: riskResult?.output,
+          market_timing: marketTimingResult?.output,
+          portfolio_optimizer: portfolioResult?.output,
+          trajectory_sim: trajectoryResult?.output,
+          exit_modeler: exitResult?.output,
+          funding_scenarios: fundingResult?.output,
+          decision_brief: decisionBrief?.output,
+          comparison_matrix: comparisonMatrix?.output,
+          timeline_projection: timelineResult?.output
+        }
+      }
+
+      setBatchPrediction(enhancedResult)
       setShowResults(true)
 
     } catch (error) {
-      console.error('Batch analysis failed:', error)
-      setNodes(prev => prev.map(n => ({ ...n, status: 'error' })))
+      console.error('[Pipeline] Analysis failed:', error)
+      setNodes(prev => prev.map(n => n.status === 'running' ? { ...n, status: 'error' } : n))
     }
 
     setIsResearching(false)
