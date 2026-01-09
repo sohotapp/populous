@@ -864,7 +864,6 @@ class MultiSourceResearchEngine:
             results = self.exa.search_and_contents(
                 query=query,
                 num_results=num_results,
-                use_autoprompt=True,
                 text=True
             )
             return results.results if hasattr(results, 'results') else []

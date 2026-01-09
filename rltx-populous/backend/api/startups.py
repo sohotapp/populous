@@ -118,7 +118,6 @@ async def debug_exa():
             test_result = engine.researcher.exa.search_and_contents(
                 query="Y Combinator startup",
                 num_results=1,
-                use_autoprompt=True,
                 text=True
             )
             if hasattr(test_result, 'results') and test_result.results:
