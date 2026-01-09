@@ -80,6 +80,18 @@ app.include_router(surveys_router)
 app.include_router(di_router)  # Decision Intelligence routes at /api/di/*
 
 
+@app.get("/")
+def root():
+    """API root"""
+    return {
+        "name": "Populous",
+        "tagline": "There's a future where you win; we engineer that for you.",
+        "version": "1.0.0",
+        "docs": "/docs",
+        "health": "/health"
+    }
+
+
 # ============ SCENARIOS ============
 
 @app.get("/scenarios", response_model=List[Scenario])
