@@ -29,6 +29,11 @@ class NodeType(str, Enum):
     SCENARIO = "scenario"
     OUTCOME = "outcome"
 
+    # Startup prediction nodes
+    STARTUP = "startup"
+    YC_BATCH = "yc_batch"
+    FACTOR = "factor"
+
 
 class ConnectionType(str, Enum):
     """Types of connections between nodes"""
@@ -53,6 +58,9 @@ NODE_ICONS = {
     NodeType.AGENT: "user",
     NodeType.SCENARIO: "git-fork",
     NodeType.OUTCOME: "target",
+    NodeType.STARTUP: "rocket",
+    NodeType.YC_BATCH: "layers",
+    NodeType.FACTOR: "gauge",
 }
 
 NODE_COLORS = {
@@ -69,6 +77,11 @@ NODE_COLORS = {
     NodeType.AGENT: colors["accent"],
     NodeType.SCENARIO: colors["info"],
     NodeType.OUTCOME: colors["success"],
+
+    # Startup prediction nodes
+    NodeType.STARTUP: "#F97316",  # Orange
+    NodeType.YC_BATCH: "#F97316",  # Orange (YC color)
+    NodeType.FACTOR: colors["info"],
 }
 
 
@@ -746,4 +759,364 @@ def edge_line(
             {"<text x='" + str(mid_x) + "' y='" + str((from_y + to_y) / 2 - 8) + "' fill='" + colors['text_tertiary'] + "' font-size='10' text-anchor='middle'>" + label + "</text>" if label else ""}
         </svg>
         """
+    )
+
+
+# =============================================================================
+# STARTUP PREDICTION NODES
+# =============================================================================
+
+def startup_node(
+    node_id: str,
+    startup_name: str,
+    unicorn_probability: float = 0,
+    data_quality: str = "unknown",
+    team_score: float = 0,
+    market_score: float = 0,
+    traction_score: float = 0,
+    industry: str = "",
+    total_raised: float = 0,
+    selected: bool = False,
+    on_click: Optional[callable] = None,
+) -> rx.Component:
+    """Startup prediction node - shows key metrics"""
+    # Color based on unicorn probability
+    prob_color = colors["success"] if unicorn_probability > 0.03 else (
+        colors["warning"] if unicorn_probability > 0.015 else colors["error"]
+    )
+    quality_colors = {
+        "high": colors["success"],
+        "medium": colors["warning"],
+        "low": colors["error"],
+        "unknown": colors["text_tertiary"],
+    }
+    quality_color = quality_colors.get(data_quality, colors["text_tertiary"])
+
+    return rx.box(
+        # Header with name and probability
+        rx.hstack(
+            rx.box(
+                rx.icon("rocket", size=18, color="#F97316"),
+                style={
+                    "padding": spacing["2"],
+                    "background": "#F9731615",
+                    "border_radius": borders["radius_md"],
+                },
+            ),
+            rx.vstack(
+                rx.text(
+                    startup_name,
+                    style={
+                        "font_size": typography["text_sm"],
+                        "font_weight": typography["weight_semibold"],
+                        "color": colors["text_primary"],
+                    },
+                ),
+                rx.cond(
+                    industry != "",
+                    rx.text(
+                        industry,
+                        style={
+                            "font_size": typography["text_xs"],
+                            "color": colors["text_secondary"],
+                        },
+                    ),
+                    rx.fragment(),
+                ),
+                spacing="0",
+                align="start",
+            ),
+            rx.spacer(),
+            # Unicorn probability badge
+            rx.box(
+                rx.text(
+                    f"{unicorn_probability * 100:.1f}%",
+                    style={
+                        "font_size": typography["text_lg"],
+                        "font_weight": typography["weight_bold"],
+                        "color": prob_color,
+                    },
+                ),
+                style={
+                    "text_align": "right",
+                },
+            ),
+            spacing="3",
+            width="100%",
+            align="center",
+        ),
+
+        # Factor scores bar
+        rx.hstack(
+            _factor_mini_bar("T", team_score, colors["info"]),
+            _factor_mini_bar("M", market_score, colors["success"]),
+            _factor_mini_bar("Tr", traction_score, colors["warning"]),
+            spacing="2",
+            margin_top=spacing["3"],
+        ),
+
+        # Bottom info row
+        rx.hstack(
+            # Data quality indicator
+            rx.hstack(
+                rx.box(
+                    style={
+                        "width": "6px",
+                        "height": "6px",
+                        "border_radius": borders["radius_full"],
+                        "background": quality_color,
+                    },
+                ),
+                rx.text(
+                    data_quality,
+                    style={
+                        "font_size": "10px",
+                        "color": colors["text_tertiary"],
+                        "text_transform": "capitalize",
+                    },
+                ),
+                spacing="1",
+                align="center",
+            ),
+            rx.spacer(),
+            # Funding if available
+            rx.cond(
+                total_raised > 0,
+                rx.text(
+                    f"${total_raised / 1e6:.0f}M raised",
+                    style={
+                        "font_size": "10px",
+                        "color": colors["text_tertiary"],
+                    },
+                ),
+                rx.fragment(),
+            ),
+            width="100%",
+            margin_top=spacing["2"],
+        ),
+
+        style={
+            **get_node_style(NodeType.STARTUP, selected),
+            "width": "220px",
+            "padding": spacing["3"],
+        },
+        on_click=on_click,
+        data_node_id=node_id,
+    )
+
+
+def _factor_mini_bar(label: str, score: float, color: str) -> rx.Component:
+    """Mini factor score bar"""
+    return rx.vstack(
+        rx.text(
+            label,
+            style={
+                "font_size": "9px",
+                "color": colors["text_tertiary"],
+                "font_weight": typography["weight_medium"],
+            },
+        ),
+        rx.box(
+            rx.box(
+                style={
+                    "width": f"{score * 100}%",
+                    "height": "100%",
+                    "background": color,
+                    "border_radius": borders["radius_full"],
+                },
+            ),
+            style={
+                "width": "40px",
+                "height": "4px",
+                "background": colors["bg_tertiary"],
+                "border_radius": borders["radius_full"],
+            },
+        ),
+        spacing="1",
+        align="center",
+    )
+
+
+def yc_batch_node(
+    node_id: str,
+    batch_name: str,
+    batch_size: int = 0,
+    expected_unicorns: float = 0,
+    batch_quality: float = 0,
+    selected: bool = False,
+    on_click: Optional[callable] = None,
+) -> rx.Component:
+    """YC Batch overview node"""
+    return rx.box(
+        rx.hstack(
+            rx.box(
+                rx.icon("layers", size=20, color="#F97316"),
+                style={
+                    "padding": spacing["2"],
+                    "background": "#F9731615",
+                    "border_radius": borders["radius_md"],
+                },
+            ),
+            rx.vstack(
+                rx.text(
+                    batch_name,
+                    style={
+                        "font_size": typography["text_base"],
+                        "font_weight": typography["weight_semibold"],
+                        "color": colors["text_primary"],
+                    },
+                ),
+                rx.text(
+                    f"{batch_size} companies",
+                    style={
+                        "font_size": typography["text_xs"],
+                        "color": colors["text_secondary"],
+                    },
+                ),
+                spacing="0",
+                align="start",
+            ),
+            spacing="3",
+            align="center",
+        ),
+
+        # Stats row
+        rx.hstack(
+            rx.vstack(
+                rx.text(
+                    f"{expected_unicorns:.1f}",
+                    style={
+                        "font_size": typography["text_lg"],
+                        "font_weight": typography["weight_bold"],
+                        "color": colors["success"],
+                    },
+                ),
+                rx.text(
+                    "Expected Unicorns",
+                    style={
+                        "font_size": "9px",
+                        "color": colors["text_tertiary"],
+                    },
+                ),
+                spacing="0",
+                align="center",
+            ),
+            rx.divider(orientation="vertical", height="30px"),
+            rx.vstack(
+                rx.text(
+                    f"{batch_quality * 100:.0f}%",
+                    style={
+                        "font_size": typography["text_lg"],
+                        "font_weight": typography["weight_bold"],
+                        "color": colors["info"],
+                    },
+                ),
+                rx.text(
+                    "Batch Quality",
+                    style={
+                        "font_size": "9px",
+                        "color": colors["text_tertiary"],
+                    },
+                ),
+                spacing="0",
+                align="center",
+            ),
+            spacing="4",
+            justify="center",
+            width="100%",
+            margin_top=spacing["3"],
+            padding_top=spacing["3"],
+            border_top=f"1px solid {colors['border_subtle']}",
+        ),
+
+        style={
+            **get_node_style(NodeType.YC_BATCH, selected),
+            "width": "200px",
+            "padding": spacing["3"],
+        },
+        on_click=on_click,
+        data_node_id=node_id,
+    )
+
+
+def factor_breakdown_node(
+    node_id: str,
+    startup_name: str,
+    factors: List[Dict[str, Any]] = [],
+    selected: bool = False,
+    on_click: Optional[callable] = None,
+) -> rx.Component:
+    """Factor breakdown panel node"""
+    factor_colors = {
+        "Team": colors["info"],
+        "Market": colors["success"],
+        "Traction": colors["warning"],
+        "Timing": "#A855F7",
+        "Capital": colors["accent"],
+    }
+
+    return rx.box(
+        rx.text(
+            f"{startup_name} - Factor Analysis",
+            style={
+                "font_size": typography["text_sm"],
+                "font_weight": typography["weight_semibold"],
+                "color": colors["text_primary"],
+                "margin_bottom": spacing["3"],
+            },
+        ),
+
+        rx.vstack(
+            *[
+                rx.hstack(
+                    rx.text(
+                        f.get("name", ""),
+                        style={
+                            "font_size": typography["text_xs"],
+                            "color": colors["text_secondary"],
+                            "width": "60px",
+                        },
+                    ),
+                    rx.box(
+                        rx.box(
+                            style={
+                                "width": f"{f.get('score', 0) * 100}%",
+                                "height": "100%",
+                                "background": factor_colors.get(f.get("name", ""), colors["accent"]),
+                                "border_radius": borders["radius_full"],
+                            },
+                        ),
+                        style={
+                            "flex": "1",
+                            "height": "8px",
+                            "background": colors["bg_tertiary"],
+                            "border_radius": borders["radius_full"],
+                        },
+                    ),
+                    rx.text(
+                        f"{f.get('score', 0) * 100:.0f}%",
+                        style={
+                            "font_size": typography["text_xs"],
+                            "color": colors["text_primary"],
+                            "width": "35px",
+                            "text_align": "right",
+                        },
+                    ),
+                    spacing="2",
+                    width="100%",
+                    align="center",
+                )
+                for f in factors
+            ],
+            spacing="2",
+            width="100%",
+        ),
+
+        style={
+            **get_node_style(NodeType.FACTOR, selected),
+            "width": "250px",
+            "padding": spacing["3"],
+        },
+        on_click=on_click,
+        data_node_id=node_id,
     )

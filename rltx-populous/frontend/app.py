@@ -60,13 +60,25 @@ class State(rx.State):
     is_chatting: bool = False
 
     # ---------- UI State ----------
-    active_tab: str = "setup"
+    active_tab: str = "startups"  # Default to startups tab
     show_scenario_details: bool = False
     show_advanced_settings: bool = False
 
     # Simulation parameters
     num_agents: int = 5000
     num_branches: int = 200
+
+    # ---------- Startup Prediction State ----------
+    startup_api_url: str = "https://api-production-9cbf.up.railway.app"
+    startups: List[Dict[str, Any]] = []
+    selected_startup: Dict[str, Any] = {}
+    selected_startup_id: str = ""
+    batch_result: Dict[str, Any] = {}
+    is_researching: bool = False
+    research_status: str = ""
+    startup_search: str = ""
+    selected_batch: str = "W24"
+    available_batches: List[str] = ["W24", "S23", "W23", "S22", "W22", "S21", "W21", "S20"]
 
     # Computed properties
     @rx.var
@@ -364,10 +376,84 @@ class State(rx.State):
 
         self.is_chatting = False
 
-    
+
     def clear_chat(self):
         """Clear chat history"""
         self.chat_messages = []
+
+    # ==========================================================================
+    # STARTUP PREDICTION API
+    # ==========================================================================
+
+    async def research_startup(self, name: str):
+        """Research a single startup"""
+        self.is_researching = True
+        self.research_status = f"Researching {name}..."
+
+        try:
+            async with httpx.AsyncClient(timeout=180) as client:
+                response = await client.post(
+                    f"{self.startup_api_url}/api/startups/research",
+                    json={"name": name, "batch": f"YC {self.selected_batch}"}
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    # Add to startups list if not already there
+                    existing_ids = [s.get("startup_id") for s in self.startups]
+                    if result.get("startup_id") not in existing_ids:
+                        self.startups = self.startups + [result]
+                    self.selected_startup = result
+                    self.selected_startup_id = result.get("startup_id", "")
+                    self.research_status = f"Completed research on {name}"
+                else:
+                    self.research_status = f"Failed to research {name}"
+        except Exception as e:
+            self.research_status = f"Error: {str(e)}"
+
+        self.is_researching = False
+
+    async def load_yc_batch(self, batch_code: str):
+        """Load predictions for a YC batch"""
+        self.is_researching = True
+        self.selected_batch = batch_code
+        self.research_status = f"Analyzing YC {batch_code} batch..."
+        self.startups = []
+
+        try:
+            async with httpx.AsyncClient(timeout=300) as client:
+                response = await client.post(
+                    f"{self.startup_api_url}/api/startups/yc/batch",
+                    params={"batch_code": batch_code, "max_companies": 8}
+                )
+                if response.status_code == 200:
+                    result = response.json()
+                    self.batch_result = result
+                    self.startups = result.get("startups", [])
+                    self.research_status = f"Loaded {len(self.startups)} companies from YC {batch_code}"
+                else:
+                    self.research_status = f"Failed to load batch: {response.status_code}"
+        except Exception as e:
+            self.research_status = f"Error: {str(e)}"
+
+        self.is_researching = False
+
+    def select_startup(self, startup_id: str):
+        """Select a startup for detail view"""
+        self.selected_startup_id = startup_id
+        for s in self.startups:
+            if s.get("startup_id") == startup_id:
+                self.selected_startup = s
+                break
+
+    def set_startup_search(self, value: str):
+        """Set startup search input"""
+        self.startup_search = value
+
+    async def search_startup(self):
+        """Search and research a startup by name"""
+        if self.startup_search:
+            await self.research_startup(self.startup_search)
+            self.startup_search = ""
 
     # ==========================================================================
     # NAVIGATION
@@ -438,6 +524,14 @@ def header() -> rx.Component:
 def nav_tabs() -> rx.Component:
     """Navigation tabs"""
     return rx.hstack(
+        rx.button(
+            rx.icon("rocket", size=16),
+            "Startups",
+            variant=rx.cond(State.active_tab == "startups", "solid", "ghost"),
+            on_click=lambda: State.set_tab("startups"),
+            color_scheme="orange",
+        ),
+        rx.divider(orientation="vertical", height="24px"),
         rx.button(
             rx.icon("settings-2", size=16),
             "Setup",
@@ -1208,6 +1302,400 @@ def agent_view() -> rx.Component:
 
 
 # =============================================================================
+# STARTUPS TAB - NODE-BASED CANVAS VIEW
+# =============================================================================
+
+def startup_card(startup: Dict[str, Any]) -> rx.Component:
+    """Individual startup card for the canvas"""
+    prob = startup.get("unicorn_probability", 0)
+    prob_color = "green" if prob > 0.03 else ("yellow" if prob > 0.015 else "red")
+    quality = startup.get("data_quality", "unknown")
+    quality_colors = {"high": "green", "medium": "yellow", "low": "red", "unknown": "gray"}
+
+    return rx.card(
+        rx.vstack(
+            # Header
+            rx.hstack(
+                rx.icon("rocket", size=20, color="orange"),
+                rx.vstack(
+                    rx.text(
+                        startup.get("startup_name", "Unknown"),
+                        weight="bold",
+                        size="3",
+                    ),
+                    rx.text(
+                        startup.get("detailed_reasoning", "")[:60] + "..." if startup.get("detailed_reasoning") else "",
+                        size="1",
+                        color="gray",
+                    ),
+                    spacing="0",
+                    align="start",
+                ),
+                rx.spacer(),
+                rx.vstack(
+                    rx.text(
+                        f"{prob * 100:.1f}%",
+                        size="5",
+                        weight="bold",
+                        color=prob_color,
+                    ),
+                    rx.text("Unicorn", size="1", color="gray"),
+                    spacing="0",
+                    align="end",
+                ),
+                width="100%",
+                align="center",
+            ),
+
+            # Factor scores
+            rx.hstack(
+                rx.vstack(
+                    rx.text("Team", size="1", color="gray"),
+                    rx.progress(value=startup.get("team_score", 0) * 100, color_scheme="blue", size="1"),
+                    spacing="1",
+                    flex="1",
+                ),
+                rx.vstack(
+                    rx.text("Market", size="1", color="gray"),
+                    rx.progress(value=startup.get("market_score", 0) * 100, color_scheme="green", size="1"),
+                    spacing="1",
+                    flex="1",
+                ),
+                rx.vstack(
+                    rx.text("Traction", size="1", color="gray"),
+                    rx.progress(value=startup.get("traction_score", 0) * 100, color_scheme="orange", size="1"),
+                    spacing="1",
+                    flex="1",
+                ),
+                spacing="3",
+                width="100%",
+            ),
+
+            # Bottom info
+            rx.hstack(
+                rx.badge(quality, color_scheme=quality_colors.get(quality, "gray"), variant="soft", size="1"),
+                rx.spacer(),
+                rx.text(f"{startup.get('source_count', 0)} sources", size="1", color="gray"),
+                width="100%",
+            ),
+            spacing="3",
+            width="100%",
+        ),
+        style={
+            "cursor": "pointer",
+            "transition": "all 0.2s",
+            "_hover": {"transform": "translateY(-2px)", "box_shadow": "lg"},
+        },
+        on_click=lambda: State.select_startup(startup.get("startup_id", "")),
+    )
+
+
+def startup_detail_panel() -> rx.Component:
+    """Detailed view of selected startup"""
+    return rx.cond(
+        State.selected_startup_id != "",
+        rx.card(
+            rx.vstack(
+                # Header
+                rx.hstack(
+                    rx.icon("rocket", size=24, color="orange"),
+                    rx.heading(State.selected_startup.get("startup_name", ""), size="5"),
+                    rx.spacer(),
+                    rx.badge(
+                        f"{State.selected_startup.get('unicorn_probability', 0) * 100:.1f}% Unicorn",
+                        color_scheme="orange",
+                        size="2",
+                    ),
+                    width="100%",
+                    align="center",
+                ),
+                rx.divider(),
+
+                # Key metrics
+                rx.grid(
+                    rx.card(
+                        rx.vstack(
+                            rx.text("Expected Valuation", size="1", color="gray"),
+                            rx.text(
+                                f"${State.selected_startup.get('expected_valuation', 0) / 1e6:.0f}M",
+                                size="4",
+                                weight="bold",
+                            ),
+                            spacing="1",
+                        ),
+                        size="1",
+                    ),
+                    rx.card(
+                        rx.vstack(
+                            rx.text("Success Probability", size="1", color="gray"),
+                            rx.text(
+                                f"{State.selected_startup.get('success_probability', 0) * 100:.1f}%",
+                                size="4",
+                                weight="bold",
+                                color="green",
+                            ),
+                            spacing="1",
+                        ),
+                        size="1",
+                    ),
+                    rx.card(
+                        rx.vstack(
+                            rx.text("Data Quality", size="1", color="gray"),
+                            rx.text(
+                                State.selected_startup.get("data_quality", "unknown").upper(),
+                                size="4",
+                                weight="bold",
+                            ),
+                            spacing="1",
+                        ),
+                        size="1",
+                    ),
+                    rx.card(
+                        rx.vstack(
+                            rx.text("Years to Exit", size="1", color="gray"),
+                            rx.text(
+                                f"{State.selected_startup.get('years_to_exit', 0):.1f}",
+                                size="4",
+                                weight="bold",
+                            ),
+                            spacing="1",
+                        ),
+                        size="1",
+                    ),
+                    columns="4",
+                    spacing="3",
+                    width="100%",
+                ),
+
+                # Factor breakdown
+                rx.text("Factor Analysis", weight="bold", size="3"),
+                rx.foreach(
+                    State.selected_startup.get("factor_details", []),
+                    lambda f: rx.hstack(
+                        rx.text(f["name"], size="2", width="80px"),
+                        rx.progress(value=f["score"] * 100, flex="1"),
+                        rx.text(f"{f['score'] * 100:.0f}%", size="2", width="40px"),
+                        width="100%",
+                        align="center",
+                    ),
+                ),
+
+                # Key insights
+                rx.text("Key Strengths", weight="bold", size="3", color="green"),
+                rx.foreach(
+                    State.selected_startup.get("key_strengths", []),
+                    lambda s: rx.badge(s, color_scheme="green", variant="soft"),
+                ),
+
+                rx.text("Key Risks", weight="bold", size="3", color="red"),
+                rx.foreach(
+                    State.selected_startup.get("key_risks", []),
+                    lambda r: rx.badge(r, color_scheme="red", variant="soft"),
+                ),
+
+                # Detailed reasoning
+                rx.text("AI Analysis", weight="bold", size="3"),
+                rx.text(
+                    State.selected_startup.get("detailed_reasoning", ""),
+                    size="2",
+                    color="gray",
+                ),
+                spacing="4",
+                width="100%",
+            ),
+            width="100%",
+        ),
+        rx.center(
+            rx.vstack(
+                rx.icon("mouse-pointer-click", size=48, color="gray"),
+                rx.text("Select a startup to see details", color="gray"),
+                spacing="2",
+            ),
+            padding="8",
+        ),
+    )
+
+
+def batch_overview_card() -> rx.Component:
+    """YC Batch overview card"""
+    return rx.cond(
+        State.batch_result != {},
+        rx.card(
+            rx.hstack(
+                rx.vstack(
+                    rx.hstack(
+                        rx.icon("layers", size=20, color="orange"),
+                        rx.text(State.batch_result.get("batch_name", ""), weight="bold", size="4"),
+                        align="center",
+                    ),
+                    rx.text(f"{State.batch_result.get('batch_size', 0)} companies analyzed", size="2", color="gray"),
+                    spacing="1",
+                    align="start",
+                ),
+                rx.spacer(),
+                rx.vstack(
+                    rx.text(f"{State.batch_result.get('expected_unicorns', 0):.2f}", size="5", weight="bold", color="green"),
+                    rx.text("Expected Unicorns", size="1", color="gray"),
+                    align="center",
+                ),
+                rx.divider(orientation="vertical", height="50px"),
+                rx.vstack(
+                    rx.text(f"{State.batch_result.get('batch_quality_score', 0) * 100:.0f}%", size="5", weight="bold", color="blue"),
+                    rx.text("Batch Quality", size="1", color="gray"),
+                    align="center",
+                ),
+                rx.divider(orientation="vertical", height="50px"),
+                rx.vstack(
+                    rx.text(f"${State.batch_result.get('expected_total_value', 0):.2f}B", size="5", weight="bold"),
+                    rx.text("Expected Value", size="1", color="gray"),
+                    align="center",
+                ),
+                width="100%",
+                align="center",
+                padding="2",
+            ),
+            margin_bottom="4",
+        ),
+        rx.fragment(),
+    )
+
+
+def startups_view() -> rx.Component:
+    """Main startups canvas view"""
+    return rx.vstack(
+        # Top toolbar
+        rx.hstack(
+            # Batch selector
+            rx.hstack(
+                rx.text("YC Batch:", weight="medium"),
+                rx.select(
+                    State.available_batches,
+                    value=State.selected_batch,
+                    on_change=State.load_yc_batch,
+                ),
+                rx.button(
+                    rx.icon("refresh-cw", size=16),
+                    "Load Batch",
+                    on_click=lambda: State.load_yc_batch(State.selected_batch),
+                    loading=State.is_researching,
+                    color_scheme="orange",
+                ),
+                spacing="2",
+                align="center",
+            ),
+
+            rx.divider(orientation="vertical", height="32px"),
+
+            # Search startup
+            rx.hstack(
+                rx.input(
+                    placeholder="Search startup by name...",
+                    value=State.startup_search,
+                    on_change=State.set_startup_search,
+                    width="200px",
+                ),
+                rx.button(
+                    rx.icon("search", size=16),
+                    "Research",
+                    on_click=State.search_startup,
+                    loading=State.is_researching,
+                ),
+                spacing="2",
+            ),
+
+            rx.spacer(),
+
+            # Status
+            rx.cond(
+                State.research_status != "",
+                rx.badge(State.research_status, variant="soft"),
+                rx.fragment(),
+            ),
+
+            width="100%",
+            padding="4",
+            background="var(--gray-2)",
+            border_radius="lg",
+        ),
+
+        # Batch overview
+        batch_overview_card(),
+
+        # Main content area - Canvas with nodes
+        rx.hstack(
+            # Canvas area with startup cards
+            rx.box(
+                rx.cond(
+                    State.startups.length() > 0,
+                    rx.box(
+                        # Grid of startup cards (canvas-style)
+                        rx.flex(
+                            rx.foreach(
+                                State.startups,
+                                startup_card,
+                            ),
+                            wrap="wrap",
+                            spacing="4",
+                            padding="4",
+                        ),
+                        width="100%",
+                        min_height="400px",
+                        background="var(--gray-1)",
+                        border="1px dashed var(--gray-6)",
+                        border_radius="lg",
+                        style={
+                            "background_image": "radial-gradient(circle, var(--gray-4) 1px, transparent 1px)",
+                            "background_size": "20px 20px",
+                        },
+                    ),
+                    rx.center(
+                        rx.vstack(
+                            rx.icon("rocket", size=64, color="var(--gray-6)"),
+                            rx.heading("No Startups Loaded", size="5", color="gray"),
+                            rx.text(
+                                "Select a YC batch above or search for a startup to begin analysis",
+                                color="gray",
+                                text_align="center",
+                            ),
+                            rx.button(
+                                "Load YC W24 Batch",
+                                on_click=lambda: State.load_yc_batch("W24"),
+                                color_scheme="orange",
+                                size="3",
+                            ),
+                            spacing="4",
+                            align="center",
+                        ),
+                        min_height="400px",
+                        width="100%",
+                        background="var(--gray-1)",
+                        border="1px dashed var(--gray-6)",
+                        border_radius="lg",
+                    ),
+                ),
+                flex="1",
+            ),
+
+            # Detail panel
+            rx.box(
+                startup_detail_panel(),
+                width="400px",
+                max_height="calc(100vh - 300px)",
+                overflow_y="auto",
+            ),
+
+            spacing="4",
+            width="100%",
+            align="start",
+        ),
+
+        spacing="4",
+        padding="4",
+        width="100%",
+    )
+
+
+# =============================================================================
 # MAIN APPLICATION
 # =============================================================================
 
@@ -1215,11 +1703,12 @@ def main_content() -> rx.Component:
     """Main content area with tab switching"""
     return rx.match(
         State.active_tab,
+        ("startups", startups_view()),
         ("setup", setup_view()),
         ("simulate", simulate_view()),
         ("results", results_view()),
         ("agent", agent_view()),
-        setup_view(),  # Default
+        startups_view(),  # Default
     )
 
 
