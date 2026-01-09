@@ -268,6 +268,54 @@ async def list_startups():
     return {"startups": summaries}
 
 
+@router.get("/methodology")
+async def get_methodology():
+    """Get detailed methodology documentation."""
+    return {
+        "version": "2.0",
+        "data_sources": {
+            "primary": [
+                "Exa API (web search)",
+                "Claude (data extraction)",
+            ],
+            "signals": [
+                "TechCrunch funding announcements",
+                "LinkedIn company pages",
+                "GitHub repositories",
+                "Product Hunt launches",
+                "G2/Capterra reviews",
+                "Crunchbase public data",
+            ]
+        },
+        "factor_weights": {
+            "team": 0.30,
+            "market": 0.25,
+            "traction": 0.20,
+            "timing": 0.15,
+            "capital": 0.10,
+        },
+        "proxy_estimation": {
+            "revenue": "employees × $80-200K/employee (by model/stage)",
+            "users": "GitHub stars × 0.2, or G2 reviews × 50",
+            "valuation": "funding × 4, or revenue × 12",
+            "growth": "stage benchmarks + signal adjustments",
+        },
+        "confidence_scoring": {
+            "high": "Multiple corroborating sources, recent data",
+            "medium": "Single source or inferred data",
+            "low": "Estimated or old data",
+        },
+        "calibration": {
+            "base_rates": {
+                "unicorn": 0.016,
+                "centaur": 0.05,
+                "success": 0.15,
+            },
+            "method": "Logistic transformation: P = base_rate × exp(4 × (composite - 0.5))",
+        }
+    }
+
+
 @router.get("/{startup_id}")
 async def get_startup(startup_id: str):
     """Get a specific startup's full prediction."""
@@ -394,52 +442,4 @@ CALIBRATION:
 - Logistic transformation to convert factor scores to probabilities
 - Monte Carlo simulation for confidence intervals
         """
-    }
-
-
-@router.get("/methodology")
-async def get_methodology():
-    """Get detailed methodology documentation."""
-    return {
-        "version": "2.0",
-        "data_sources": {
-            "primary": [
-                "Exa API (web search)",
-                "Claude (data extraction)",
-            ],
-            "signals": [
-                "TechCrunch funding announcements",
-                "LinkedIn company pages",
-                "GitHub repositories",
-                "Product Hunt launches",
-                "G2/Capterra reviews",
-                "Crunchbase public data",
-            ]
-        },
-        "factor_weights": {
-            "team": 0.30,
-            "market": 0.25,
-            "traction": 0.20,
-            "timing": 0.15,
-            "capital": 0.10,
-        },
-        "proxy_estimation": {
-            "revenue": "employees × $80-200K/employee (by model/stage)",
-            "users": "GitHub stars × 0.2, or G2 reviews × 50",
-            "valuation": "funding × 4, or revenue × 12",
-            "growth": "stage benchmarks + signal adjustments",
-        },
-        "confidence_scoring": {
-            "high": "Multiple corroborating sources, recent data",
-            "medium": "Single source or inferred data",
-            "low": "Estimated or old data",
-        },
-        "calibration": {
-            "base_rates": {
-                "unicorn": 0.016,
-                "centaur": 0.05,
-                "success": 0.15,
-            },
-            "method": "Logistic transformation: P = base_rate × exp(4 × (composite - 0.5))",
-        }
     }
