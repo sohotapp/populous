@@ -120,14 +120,11 @@ function CanvasNode({
       onMouseDown={handleMouseDown}
     >
       <div
-        className={`
-          w-[200px] rounded-lg border transition-all duration-200
-          ${selected ? 'ring-2 ring-offset-2 ring-offset-[#0D0D0F]' : ''}
-        `}
+        className="w-[200px] rounded-lg border transition-all duration-200"
         style={{
           background: colors.bgSecondary,
           borderColor: selected ? color : colors.border,
-          ringColor: color,
+          boxShadow: selected ? `0 0 0 2px ${colors.bg}, 0 0 0 4px ${color}` : 'none',
         }}
       >
         {/* Header */}
