@@ -499,7 +499,7 @@ export default function CanvasPage() {
   // Canvas state
   const [nodes, setNodes] = useState<Node[]>([
     { id: '1', type: 'batch', x: 100, y: 150, title: 'YC Batch Analysis', subtitle: 'Analyze accelerator batch', status: 'idle' },
-    { id: '2', type: 'research', x: 400, y: 80, title: 'Deep Research', subtitle: 'Exa API + Claude', status: 'idle' },
+    { id: '2', type: 'research', x: 400, y: 80, title: 'Deep Research', subtitle: 'Multi-source intelligence', status: 'idle' },
     { id: '3', type: 'prediction', x: 400, y: 220, title: 'Unicorn Prediction', subtitle: 'Factor-based model', status: 'idle' },
     { id: '4', type: 'analysis', x: 700, y: 150, title: 'Portfolio Analysis', subtitle: 'Aggregate predictions', status: 'idle' },
     { id: '5', type: 'chat', x: 1000, y: 150, title: 'Interactive Chat', subtitle: 'Ask questions', status: 'idle' },
