@@ -330,6 +330,22 @@ class StartupPredictionEngine:
 
     async def _discover_batch_companies(self, batch_name: str) -> List[str]:
         """Discover companies in a batch using Exa."""
+        # Fallback data for well-known YC batches
+        YC_BATCH_FALLBACKS = {
+            "YC W24": ["Simular", "Greptile", "Artisan AI", "Laminar", "Miru", "Draftaid", "Campana", "Peakflo", "Orby AI", "Codegen"],
+            "YC S23": ["Wondercraft", "Velt", "Turntable", "Reworkd AI", "Mintlify", "LlamaIndex", "Finch", "Copy.ai", "CodeComplete", "Baseten"],
+            "YC W23": ["Resend", "Tremor", "Nango", "Firecrawl", "Dub", "Cal.com", "Buildship", "Trigger.dev", "Infisical", "OpenPipe"],
+            "YC S22": ["Replit", "Supabase", "Anthropic", "PostHog", "Retool", "Deel", "Linear", "Braintrust", "Railway", "Vercel"],
+            "YC W22": ["Airplane", "Stytch", "Neon", "PropelAuth", "Raycast", "Instatus", "Loops", "Knock", "Basedash", "WorkOS"],
+            "YC S21": ["Airbyte", "Ashby", "Contra", "Sprig", "Swimm", "Monte Carlo", "Census", "Courier", "Merge", "Modern Treasury"],
+            "YC W21": ["Merge API", "Clay", "Postscript", "Arctic Wolf", "Jeeves", "Gumroad", "Replo", "Copilot", "Slite", "Hive"],
+            "YC S20": ["Gather", "Tandem", "ReadMe", "Temporal", "Streamlit", "Scale AI", "Mux", "Daily.co", "CodeSandbox", "Loom"],
+        }
+
+        # Check fallback first
+        if batch_name in YC_BATCH_FALLBACKS:
+            return YC_BATCH_FALLBACKS[batch_name]
+
         if not self.exa:
             return []
 
