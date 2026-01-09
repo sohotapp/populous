@@ -379,53 +379,140 @@ class ScenarioAnalysis(BaseModel):
 class DeliverablesGenerator:
     """Generates all deliverables from graph state"""
 
-    def __init__(self, graph_state: Any):
+    def __init__(self, graph_state: Any, framework: Any = None):
         self.state = graph_state
+        self.framework = framework
+
+        # Load default framework if none provided
+        if self.framework is None:
+            try:
+                from backend.engine.config.decision_framework import DecisionFramework
+                self.framework = DecisionFramework()
+            except ImportError:
+                self.framework = None
+
+    def _get_threshold(self, threshold_name: str, default: float) -> float:
+        """Get threshold from framework or use default"""
+        if self.framework and hasattr(self.framework, 'thresholds'):
+            return getattr(self.framework.thresholds, threshold_name, default)
+        return default
+
+    def _get_investment_criteria(self, criteria_name: str, default: Any) -> Any:
+        """Get investment criteria from framework"""
+        if self.framework and hasattr(self.framework, 'investment_criteria'):
+            return getattr(self.framework.investment_criteria, criteria_name, default)
+        return default
+
+    def _calculate_deal_terms(self, valuation: float) -> Dict[str, Any]:
+        """Calculate deal terms from framework configuration"""
+        min_check = self._get_investment_criteria('min_check_size', 500_000)
+        max_check = self._get_investment_criteria('max_check_size', 5_000_000)
+        target_ownership = self._get_investment_criteria('min_ownership_target', 0.10)
+
+        # Calculate investment amount to hit target ownership
+        investment = valuation * target_ownership / (1 - target_ownership)
+        investment = max(min_check, min(max_check, investment))
+
+        ownership = investment / (valuation + investment)
+
+        return {
+            "investment_amount": investment,
+            "pre_money_valuation": valuation,
+            "post_money_valuation": valuation + investment,
+            "ownership_percentage": ownership * 100,
+            "instrument": "SAFE" if valuation < 10_000_000 else "Priced Round"
+        }
 
     def generate_investment_memo(self, company_name: str) -> InvestmentMemo:
-        """Generate board-ready investment memo"""
+        """Generate board-ready investment memo using framework configuration"""
         pred = self.state.predictions.get(company_name, {})
         brief = self.state.decision_briefs.get(company_name, {})
         research = self.state.research.get(company_name, {})
+        monte_carlo = self.state.monte_carlo.get(company_name, {})
+        exit_model = self.state.exit_models.get(company_name, {})
 
-        # Calculate recommendation
+        # Extract prediction values (handle both object and dict)
         prob = getattr(pred, 'unicorn_probability', 0) if hasattr(pred, 'unicorn_probability') else pred.get('unicorn_probability', 0)
-        if prob > 0.15:
+        expected_val = getattr(pred, 'expected_valuation', 50_000_000) if hasattr(pred, 'expected_valuation') else pred.get('expected_valuation', 50_000_000)
+        confidence = getattr(pred, 'prediction_confidence', 0.5) if hasattr(pred, 'prediction_confidence') else pred.get('prediction_confidence', 0.5)
+
+        # Get factor scores from prediction
+        team_score = getattr(pred, 'team_score', 0.5) if hasattr(pred, 'team_score') else pred.get('team_score', 0.5)
+        market_score = getattr(pred, 'market_score', 0.5) if hasattr(pred, 'market_score') else pred.get('market_score', 0.5)
+        traction_score = getattr(pred, 'traction_score', 0.5) if hasattr(pred, 'traction_score') else pred.get('traction_score', 0.5)
+        timing_score = getattr(pred, 'timing_score', 0.5) if hasattr(pred, 'timing_score') else pred.get('timing_score', 0.5)
+        capital_score = getattr(pred, 'capital_score', 0.5) if hasattr(pred, 'capital_score') else pred.get('capital_score', 0.5)
+
+        # Get key strengths and risks from prediction
+        key_strengths = getattr(pred, 'key_strengths', []) if hasattr(pred, 'key_strengths') else pred.get('key_strengths', [])
+        key_risks = getattr(pred, 'key_risks', []) if hasattr(pred, 'key_risks') else pred.get('key_risks', [])
+
+        # Calculate recommendation using framework thresholds
+        strong_yes_threshold = self._get_threshold('strong_yes_threshold', 0.15)
+        yes_threshold = self._get_threshold('yes_threshold', 0.08)
+        conditional_threshold = self._get_threshold('conditional_threshold', 0.04)
+        no_threshold = self._get_threshold('no_threshold', 0.02)
+
+        if prob > strong_yes_threshold:
             recommendation = RecommendationStrength.STRONG_YES
-        elif prob > 0.08:
+        elif prob > yes_threshold:
             recommendation = RecommendationStrength.YES
-        elif prob > 0.04:
+        elif prob > conditional_threshold:
             recommendation = RecommendationStrength.CONDITIONAL
-        elif prob > 0.02:
+        elif prob > no_threshold:
             recommendation = RecommendationStrength.NO
         else:
             recommendation = RecommendationStrength.STRONG_NO
 
-        expected_val = getattr(pred, 'expected_valuation', 50_000_000) if hasattr(pred, 'expected_valuation') else pred.get('expected_valuation', 50_000_000)
+        # Calculate deal terms from framework
+        deal_terms = self._calculate_deal_terms(expected_val)
+        investment_amount = deal_terms["investment_amount"]
+        ownership_pct = deal_terms["ownership_percentage"]
+
+        # Extract exit probabilities from exit model
+        exit_ipo_prob = exit_model.get('ipo_probability', prob)
+        exit_acquisition_prob = exit_model.get('acquisition_probability', 0.3)
+
+        # Calculate expected IRR from Monte Carlo if available
+        expected_irr = 0.30  # Default
+        if monte_carlo:
+            mc_mean = monte_carlo.get('mean', prob)
+            if mc_mean > 0.15:
+                expected_irr = 0.50
+            elif mc_mean > 0.08:
+                expected_irr = 0.35
+            elif mc_mean > 0.04:
+                expected_irr = 0.25
+            else:
+                expected_irr = 0.15
+
+        # Calculate expected return multiple
+        expected_multiple = prob * 20 + exit_acquisition_prob * 5 + (1 - prob - exit_acquisition_prob) * 0.5
 
         return InvestmentMemo(
             company_name=company_name,
+            prepared_for=self.framework.outputs.company_name if self.framework and hasattr(self.framework, 'outputs') else "Investment Committee",
             recommendation=recommendation,
-            recommendation_summary=f"{company_name} presents a {recommendation.value.lower().replace('_', ' ')} investment opportunity with {prob*100:.1f}% unicorn probability and expected valuation of ${expected_val/1e6:.0f}M.",
-            confidence_level=getattr(pred, 'prediction_confidence', 0.5) if hasattr(pred, 'prediction_confidence') else 0.5,
+            recommendation_summary=f"{company_name} presents a {recommendation.value.lower().replace('_', ' ')} investment opportunity with {prob*100:.1f}% unicorn probability, {confidence*100:.0f}% model confidence, and expected valuation of ${expected_val/1e6:.0f}M.",
+            confidence_level=confidence,
             thesis=InvestmentThesis(
-                headline=f"Invest $500K at ${expected_val/1e6:.0f}M valuation for 1% ownership",
-                rationale=getattr(pred, 'key_strengths', ['Strong team', 'Large market', 'Early traction'])[:3] if hasattr(pred, 'key_strengths') else ['Analysis pending'],
+                headline=f"Invest ${investment_amount/1e6:.1f}M at ${expected_val/1e6:.0f}M valuation for {ownership_pct:.1f}% ownership",
+                rationale=key_strengths[:4] if key_strengths else ['Strong founding team', 'Large addressable market', 'Early traction signals', 'Favorable timing'],
                 key_assumptions=[
-                    "Market continues to grow at 20%+ CAGR",
-                    "Team can execute on product roadmap",
-                    "Competitive moat is defensible"
+                    f"Team score of {team_score*100:.0f}/100 reflects execution capability",
+                    f"Market opportunity supports ${expected_val/1e6:.0f}M+ outcomes",
+                    f"Current traction ({traction_score*100:.0f}/100) validates product-market fit trajectory"
                 ],
-                upside_case="If market timing is right and execution is strong, could reach unicorn status in 5-7 years",
-                downside_case="If market contracts or competition intensifies, may require bridge financing or acqui-hire exit"
+                upside_case=f"With {prob*100:.1f}% unicorn probability, strong execution could yield {expected_multiple:.0f}x+ returns in 5-7 years",
+                downside_case="Market contraction or execution issues could require bridge financing or result in acqui-hire exit"
             ),
             deal=DealTerms(
-                investment_amount=500_000,
+                investment_amount=investment_amount,
                 pre_money_valuation=expected_val,
-                post_money_valuation=expected_val + 500_000,
-                ownership_percentage=500_000 / (expected_val + 500_000) * 100,
-                instrument="SAFE",
-                key_terms=["Pro-rata rights", "Information rights", "MFN clause"]
+                post_money_valuation=expected_val + investment_amount,
+                ownership_percentage=ownership_pct,
+                instrument=deal_terms["instrument"],
+                key_terms=["Pro-rata rights", "Information rights", "Board observer seat"] if investment_amount > 1_000_000 else ["Pro-rata rights", "Information rights", "MFN clause"]
             ),
             metrics={
                 "unicorn_probability": f"{prob*100:.1f}%",
