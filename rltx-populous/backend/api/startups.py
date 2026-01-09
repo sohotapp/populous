@@ -98,6 +98,45 @@ async def health():
     }
 
 
+@router.get("/debug/exa")
+async def debug_exa():
+    """Debug Exa API connection."""
+    import os
+    engine = get_engine()
+
+    result = {
+        "exa_key_set": bool(os.environ.get("EXA_API_KEY")),
+        "exa_key_prefix": os.environ.get("EXA_API_KEY", "")[:8] + "..." if os.environ.get("EXA_API_KEY") else None,
+        "exa_client": engine.researcher.exa is not None if hasattr(engine, 'researcher') else False,
+        "test_query_result": None,
+        "test_query_error": None,
+    }
+
+    if hasattr(engine, 'researcher') and engine.researcher.exa:
+        try:
+            # Try a simple query
+            test_result = engine.researcher.exa.search_and_contents(
+                query="Y Combinator startup",
+                num_results=1,
+                use_autoprompt=True,
+                text=True
+            )
+            if hasattr(test_result, 'results') and test_result.results:
+                r = test_result.results[0]
+                result["test_query_result"] = {
+                    "success": True,
+                    "title": getattr(r, 'title', 'N/A')[:100],
+                    "url": getattr(r, 'url', 'N/A'),
+                    "text_length": len(getattr(r, 'text', '') or ''),
+                }
+            else:
+                result["test_query_result"] = {"success": False, "message": "No results returned"}
+        except Exception as e:
+            result["test_query_error"] = str(e)
+
+    return result
+
+
 @router.post("/research")
 async def research_startup(request: ResearchStartupRequest):
     """
