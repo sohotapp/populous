@@ -35,6 +35,7 @@ from backend.api.projects import router as projects_router
 from backend.api.audiences import router as audiences_router
 from backend.api.surveys import router as surveys_router
 from backend.api.decision_intelligence import router as di_router
+from backend.api.startups import router as startups_router
 
 
 # In-memory storage (replace with database for production)
@@ -78,6 +79,7 @@ app.include_router(projects_router)
 app.include_router(audiences_router)
 app.include_router(surveys_router)
 app.include_router(di_router)  # Decision Intelligence routes at /api/di/*
+app.include_router(startups_router)  # Startup prediction routes at /api/startups/*
 
 
 @app.get("/")
