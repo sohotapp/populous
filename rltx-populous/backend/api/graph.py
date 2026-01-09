@@ -69,8 +69,18 @@ class GraphResultResponse(BaseModel):
     comparison_matrix: Optional[Dict] = None
     portfolio_analysis: Optional[Dict] = None
 
+    # Enterprise Deliverables
+    deliverables: Optional[Dict] = None
+
     # Full state (for debugging)
     full_state: Optional[Dict] = None
+
+
+class DeliverableType(str):
+    INVESTMENT_MEMO = "investment_memo"
+    RISK_REGISTER = "risk_register"
+    EXECUTIVE_BRIEF = "executive_brief"
+    DECISION_MATRIX = "decision_matrix"
 
 
 # ============================================================================
@@ -257,7 +267,8 @@ async def get_execution_results(execution_id: str, include_full_state: bool = Fa
         predictions=predictions,
         decision_briefs=briefs,
         comparison_matrix=state.comparison_matrix,
-        portfolio_analysis=state.portfolio_analysis
+        portfolio_analysis=state.portfolio_analysis,
+        deliverables=state.deliverables
     )
 
     if include_full_state:
@@ -327,8 +338,132 @@ async def execute_graph_sync(request: ExecuteGraphRequest):
         decision_briefs=briefs,
         comparison_matrix=state.comparison_matrix,
         portfolio_analysis=state.portfolio_analysis,
+        deliverables=state.deliverables,
         full_state=state.model_dump()
     )
+
+
+# ============================================================================
+# DELIVERABLES ENDPOINTS
+# ============================================================================
+
+@router.get("/deliverables/{execution_id}")
+async def get_deliverables(execution_id: str):
+    """
+    Get all generated deliverables for a completed execution.
+
+    Returns board-ready documents:
+    - Investment Memos (per company)
+    - Risk Registers (per company)
+    - Executive Briefs (per company)
+    - Decision Matrix (batch-level)
+    """
+    if execution_id not in _executions:
+        raise HTTPException(404, "Execution not found")
+
+    exec_data = _executions[execution_id]
+
+    if exec_data["status"] == "running":
+        raise HTTPException(400, "Execution still running")
+
+    result: GraphExecutionResult = exec_data.get("result")
+    if not result:
+        raise HTTPException(500, "No result available")
+
+    state = result.final_state
+
+    if not state.deliverables:
+        raise HTTPException(404, "Deliverables not generated for this execution")
+
+    return state.deliverables
+
+
+@router.get("/deliverables/{execution_id}/investment-memo/{company_name}")
+async def get_investment_memo(execution_id: str, company_name: str):
+    """Get investment memo for a specific company"""
+    if execution_id not in _executions:
+        raise HTTPException(404, "Execution not found")
+
+    exec_data = _executions[execution_id]
+    result: GraphExecutionResult = exec_data.get("result")
+    if not result:
+        raise HTTPException(500, "No result available")
+
+    state = result.final_state
+    if not state.deliverables:
+        raise HTTPException(404, "Deliverables not generated")
+
+    memo = state.deliverables.get("investment_memos", {}).get(company_name)
+    if not memo:
+        raise HTTPException(404, f"Investment memo not found for {company_name}")
+
+    return memo
+
+
+@router.get("/deliverables/{execution_id}/risk-register/{company_name}")
+async def get_risk_register(execution_id: str, company_name: str):
+    """Get risk register for a specific company"""
+    if execution_id not in _executions:
+        raise HTTPException(404, "Execution not found")
+
+    exec_data = _executions[execution_id]
+    result: GraphExecutionResult = exec_data.get("result")
+    if not result:
+        raise HTTPException(500, "No result available")
+
+    state = result.final_state
+    if not state.deliverables:
+        raise HTTPException(404, "Deliverables not generated")
+
+    register = state.deliverables.get("risk_registers", {}).get(company_name)
+    if not register:
+        raise HTTPException(404, f"Risk register not found for {company_name}")
+
+    return register
+
+
+@router.get("/deliverables/{execution_id}/executive-brief/{company_name}")
+async def get_executive_brief(execution_id: str, company_name: str):
+    """Get executive brief for a specific company"""
+    if execution_id not in _executions:
+        raise HTTPException(404, "Execution not found")
+
+    exec_data = _executions[execution_id]
+    result: GraphExecutionResult = exec_data.get("result")
+    if not result:
+        raise HTTPException(500, "No result available")
+
+    state = result.final_state
+    if not state.deliverables:
+        raise HTTPException(404, "Deliverables not generated")
+
+    brief = state.deliverables.get("executive_briefs", {}).get(company_name)
+    if not brief:
+        raise HTTPException(404, f"Executive brief not found for {company_name}")
+
+    return brief
+
+
+@router.get("/deliverables/{execution_id}/decision-matrix")
+async def get_decision_matrix(execution_id: str):
+    """Get the batch-level decision matrix"""
+    if execution_id not in _executions:
+        raise HTTPException(404, "Execution not found")
+
+    exec_data = _executions[execution_id]
+    result: GraphExecutionResult = exec_data.get("result")
+    if not result:
+        raise HTTPException(500, "No result available")
+
+    state = result.final_state
+    if not state.deliverables:
+        raise HTTPException(404, "Deliverables not generated")
+
+    matrix = state.deliverables.get("decision_matrix")
+    if not matrix:
+        raise HTTPException(404, "Decision matrix not found")
+
+    return matrix
 
 
 @router.get("/demo")

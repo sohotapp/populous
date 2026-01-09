@@ -186,6 +186,7 @@ class GraphExecutor:
             "trajectory_sim": self._execute_trajectory_sim,
             "exit_modeler": self._execute_exit_modeler,
             "funding_scenarios": self._execute_funding_scenarios,
+            "deliverables": self._execute_deliverables,
         }
 
         handler = handlers.get(node_name)
@@ -246,6 +247,9 @@ class GraphExecutor:
 
         elif node_name == "funding_scenarios" and isinstance(output, dict):
             state.funding_scenarios.update(output)
+
+        elif node_name == "deliverables":
+            state.deliverables = output
 
     # =========================================================================
     # NODE IMPLEMENTATIONS
@@ -1202,3 +1206,13 @@ Be direct and actionable."""
             "portfolio_risk": portfolio_risk,
             "sharpe_ratio": portfolio_return / (portfolio_risk + 0.1)
         }
+
+    async def _execute_deliverables(self, state: GraphState) -> Dict:
+        """
+        Generate enterprise deliverables - the ANSWER NODES.
+        These are board-ready documents that justify $5-10M contracts.
+        """
+        from backend.engine.graph.deliverables import DeliverablesGenerator
+
+        generator = DeliverablesGenerator(state)
+        return generator.generate_all_deliverables()

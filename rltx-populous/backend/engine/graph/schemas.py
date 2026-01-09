@@ -499,6 +499,9 @@ class GraphState(BaseModel):
     portfolio_analysis: Optional[Dict] = None
     comparison_matrix: Optional[Dict] = None
 
+    # Layer 5: Enterprise Deliverables (Answer Nodes)
+    deliverables: Optional[Dict] = None  # Generated board-ready documents
+
     # Aggregates
     batch_summary: Optional[Dict] = None
 
@@ -671,6 +674,16 @@ NODE_DEFINITIONS = {
         input_schema="Dict",
         output_schema="Dict",
         description="Optimal allocation across companies"
+    ),
+
+    # Enterprise Deliverables (Answer Nodes)
+    "deliverables": NodeDefinition(
+        name="deliverables",
+        category="output",
+        dependencies=["decision_brief", "comparison_matrix", "portfolio_optimizer"],
+        input_schema="Dict",
+        output_schema="Dict",
+        description="Board-ready enterprise deliverables: Investment Memos, Risk Registers, Executive Briefs"
     ),
 }
 

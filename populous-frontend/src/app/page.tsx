@@ -1140,6 +1140,36 @@ const api = {
     demo: async () => {
       const res = await fetch(`${API_URL}/api/graph/demo`)
       return res.json()
+    },
+
+    // Get all deliverables for an execution
+    getDeliverables: async (executionId: string) => {
+      const res = await fetch(`${API_URL}/api/graph/deliverables/${executionId}`)
+      return res.json()
+    },
+
+    // Get investment memo for a specific company
+    getInvestmentMemo: async (executionId: string, companyName: string) => {
+      const res = await fetch(`${API_URL}/api/graph/deliverables/${executionId}/investment-memo/${encodeURIComponent(companyName)}`)
+      return res.json()
+    },
+
+    // Get risk register for a specific company
+    getRiskRegister: async (executionId: string, companyName: string) => {
+      const res = await fetch(`${API_URL}/api/graph/deliverables/${executionId}/risk-register/${encodeURIComponent(companyName)}`)
+      return res.json()
+    },
+
+    // Get executive brief for a specific company
+    getExecutiveBrief: async (executionId: string, companyName: string) => {
+      const res = await fetch(`${API_URL}/api/graph/deliverables/${executionId}/executive-brief/${encodeURIComponent(companyName)}`)
+      return res.json()
+    },
+
+    // Get decision matrix for the batch
+    getDecisionMatrix: async (executionId: string) => {
+      const res = await fetch(`${API_URL}/api/graph/deliverables/${executionId}/decision-matrix`)
+      return res.json()
     }
   }
 }
@@ -1658,6 +1688,13 @@ export default function CanvasPage() {
   const [showResults, setShowResults] = useState(false)
   const [batchCode, setBatchCode] = useState('W24')
 
+  // Enterprise Deliverables state
+  const [deliverables, setDeliverables] = useState<any>(null)
+  const [showDeliverables, setShowDeliverables] = useState(false)
+  const [selectedDeliverableType, setSelectedDeliverableType] = useState<'decision_matrix' | 'investment_memo' | 'risk_register' | 'executive_brief'>('decision_matrix')
+  const [selectedCompanyForDeliverable, setSelectedCompanyForDeliverable] = useState<string | null>(null)
+  const [executionId, setExecutionId] = useState<string | null>(null)
+
   // Chat state
   const [chatMessages, setChatMessages] = useState<Array<{ role: string, content: string }>>([])
   const [chatInput, setChatInput] = useState('')
@@ -1751,6 +1788,10 @@ export default function CanvasPage() {
     setIsResearching(true)
     setShowResults(false)
     setBatchPrediction(null)
+    setShowNodeDetail(false)
+
+    // Reset all nodes to idle first
+    setNodes(prev => prev.map(n => ({ ...n, status: 'idle' as const })))
 
     // Helper to update single node status
     const updateNodeStatus = (nodeId: string, status: 'idle' | 'running' | 'complete' | 'error') => {
@@ -1762,87 +1803,123 @@ export default function CanvasPage() {
       setNodes(prev => prev.map(n => nodeIds.includes(n.id) ? { ...n, status } : n))
     }
 
-    // Graph execution order - nodes run in this sequence with data flowing between them
+    // Graph execution order - matches backend node IDs
     const executionOrder = [
       'batch', 'research', 'market_scanner', 'alternative_data',
       'financial_signals', 'network_graph', 'historical_outcomes',
       'prediction', 'monte_carlo', 'sensitivity',
       'trajectory_sim', 'exit_modeler', 'funding_scenarios',
-      'decision_brief', 'comparison_matrix', 'portfolio_optimizer'
+      'decision_brief', 'comparison_matrix', 'portfolio_optimizer',
+      'deliverables'  // Enterprise deliverables node (Answer Node)
+    ]
+
+    // Additional frontend nodes to mark complete after main pipeline
+    const additionalNodes = [
+      'cohort_comparison', 'risk_decomposition', 'market_timing',
+      'competitive_dynamics', 'scenario_planner', 'chat',
+      'investment_memo', 'risk_report', 'portfolio_dashboard',
+      'alert_system', 'stakeholder_views', 'whatif_explorer', 'timeline_projection'
     ]
 
     try {
       console.log('[GraphPipeline] Starting full graph execution...')
-      console.log('[GraphPipeline] Batch:', batchCode, '| Using Graph API with state accumulation')
+      console.log('[GraphPipeline] Batch:', batchCode)
+
+      // Start first node as running immediately for visual feedback
+      updateNodeStatus('batch', 'running')
 
       // Start async execution
       const execResponse = await api.graph.execute(batchCode, 5)
+
+      if (!execResponse || !execResponse.execution_id) {
+        throw new Error('Failed to start graph execution - no execution ID returned')
+      }
+
       const executionId = execResponse.execution_id
       console.log('[GraphPipeline] Execution started:', executionId)
 
       // Poll for status and update node visualizations
       let completed = false
       let lastCompletedCount = 0
+      let pollCount = 0
+      const maxPolls = 300 // 2.5 minutes max
 
-      while (!completed) {
+      while (!completed && pollCount < maxPolls) {
         await new Promise(resolve => setTimeout(resolve, 500)) // Poll every 500ms
+        pollCount++
 
-        const status = await api.graph.getStatus(executionId)
-        console.log('[GraphPipeline] Status:', status.status, '| Progress:', (status.progress * 100).toFixed(0) + '%')
+        try {
+          const status = await api.graph.getStatus(executionId)
+          console.log('[GraphPipeline] Poll', pollCount, '| Status:', status.status, '| Progress:', (status.progress * 100).toFixed(0) + '%', '| Nodes:', status.nodes_completed?.length || 0)
 
-        // Update node statuses based on completion
-        const completedNodes = status.nodes_completed || []
+          // Update node statuses based on completion
+          const completedNodes = status.nodes_completed || []
 
-        // Mark newly completed nodes
-        if (completedNodes.length > lastCompletedCount) {
-          for (const nodeId of completedNodes) {
-            updateNodeStatus(nodeId, 'complete')
-          }
-          lastCompletedCount = completedNodes.length
+          // Mark newly completed nodes
+          if (completedNodes.length > lastCompletedCount) {
+            for (const nodeId of completedNodes) {
+              updateNodeStatus(nodeId, 'complete')
+            }
+            lastCompletedCount = completedNodes.length
 
-          // Mark next node as running
-          const nextNodeIndex = completedNodes.length
-          if (nextNodeIndex < executionOrder.length) {
-            const nextNode = executionOrder[nextNodeIndex]
-            if (nextNode) {
-              updateNodeStatus(nextNode, 'running')
+            // Mark next node as running
+            const nextNodeIndex = completedNodes.length
+            if (nextNodeIndex < executionOrder.length) {
+              const nextNode = executionOrder[nextNodeIndex]
+              if (nextNode) {
+                updateNodeStatus(nextNode, 'running')
+              }
             }
           }
-        }
 
-        // Also update output nodes progress
-        if (status.progress > 0.8) {
-          updateNodesStatus(['chat', 'investment_memo', 'risk_report', 'portfolio_dashboard', 'alert_system', 'stakeholder_views', 'whatif_explorer', 'timeline_projection'], 'running')
-        }
-
-        if (status.status === 'completed' || status.status === 'failed') {
-          completed = true
-          if (status.status === 'failed') {
-            throw new Error('Graph execution failed')
+          // Update additional nodes based on progress
+          if (status.progress > 0.3) {
+            updateNodesStatus(['cohort_comparison', 'risk_decomposition'], 'running')
           }
+          if (status.progress > 0.5) {
+            updateNodesStatus(['market_timing', 'competitive_dynamics', 'scenario_planner'], 'running')
+          }
+          if (status.progress > 0.8) {
+            updateNodesStatus(['chat', 'investment_memo', 'risk_report', 'portfolio_dashboard', 'alert_system', 'stakeholder_views', 'whatif_explorer', 'timeline_projection'], 'running')
+          }
+
+          if (status.status === 'completed' || status.status === 'failed') {
+            completed = true
+            if (status.status === 'failed') {
+              throw new Error('Graph execution failed: ' + (status.error || 'Unknown error'))
+            }
+          }
+        } catch (pollError) {
+          console.error('[GraphPipeline] Poll error:', pollError)
+          // Continue polling on error
         }
       }
 
-      // Mark all output nodes complete
-      updateNodesStatus([
-        'chat', 'decision_brief', 'investment_memo', 'risk_report',
-        'comparison_matrix', 'portfolio_dashboard', 'alert_system',
-        'stakeholder_views', 'whatif_explorer', 'timeline_projection',
-        'cohort_comparison', 'risk_decomposition', 'market_timing',
-        'competitive_dynamics', 'scenario_planner'
-      ], 'complete')
+      if (!completed) {
+        throw new Error('Graph execution timed out after ' + (pollCount * 0.5) + ' seconds')
+      }
+
+      // Mark all nodes complete
+      updateNodesStatus(executionOrder, 'complete')
+      updateNodesStatus(additionalNodes, 'complete')
 
       // Fetch full results
       console.log('[GraphPipeline] Fetching full results...')
       const results = await api.graph.getResults(executionId, true)
+
+      if (!results) {
+        throw new Error('No results returned from graph execution')
+      }
+
       console.log('[GraphPipeline] Results received:', {
         companies: results.companies?.length,
         predictions: Object.keys(results.predictions || {}).length,
-        success: results.success
+        success: results.success,
+        time: results.total_time_ms
       })
 
       // Transform graph results to batch prediction format
-      const startups = results.companies?.map((companyName: string) => {
+      const startups = (results.companies || []).map((companyName: string) => {
         const pred = results.predictions?.[companyName] || {}
         const brief = results.decision_briefs?.[companyName] || {}
         return {
@@ -1851,28 +1928,28 @@ export default function CanvasPage() {
           unicorn_probability: pred.unicorn_probability || 0,
           centaur_probability: pred.centaur_probability || 0,
           success_probability: pred.success_probability || 0,
-          failure_probability: pred.failure_probability || 0,
+          failure_probability: 1 - (pred.success_probability || 0),
           expected_valuation: pred.expected_valuation || 0,
-          valuation_p10: pred.expected_valuation * 0.3 || 0,
-          valuation_p50: pred.expected_valuation * 0.7 || 0,
-          valuation_p90: pred.expected_valuation * 2.5 || 0,
+          valuation_p10: (pred.expected_valuation || 0) * 0.3,
+          valuation_p50: (pred.expected_valuation || 0) * 0.7,
+          valuation_p90: (pred.expected_valuation || 0) * 2.5,
           team_score: pred.team_score || 0.5,
           market_score: pred.market_score || 0.5,
           traction_score: pred.traction_score || 0.5,
           timing_score: pred.timing_score || 0.5,
           capital_score: pred.capital_score || 0.5,
-          key_strengths: pred.key_strengths || [],
-          key_risks: pred.key_risks || [],
-          detailed_reasoning: brief.summary || '',
+          key_strengths: pred.key_strengths || ['Data analysis in progress'],
+          key_risks: pred.key_risks || ['Limited data available'],
+          detailed_reasoning: brief.summary || `${companyName} analysis complete.`,
           prediction_confidence: pred.prediction_confidence || 0.5,
           data_quality: 'high',
           recommendation: brief.recommendation || 'MONITOR',
           percentile_rank: brief.percentile_rank || 50,
           years_to_exit: 7
         }
-      }) || []
+      })
 
-      // Sort by unicorn probability
+      // Sort by unicorn probability (descending)
       startups.sort((a: any, b: any) => b.unicorn_probability - a.unicorn_probability)
 
       // Calculate batch-level stats
@@ -1889,7 +1966,7 @@ export default function CanvasPage() {
         startups,
         top_unicorn_candidates: startups.slice(0, 3).map((s: any) => s.startup_name),
         highest_risk_startups: startups.slice(-2).map((s: any) => s.startup_name),
-        batch_quality_score: startups.reduce((sum: number, s: any) => sum + s.prediction_confidence, 0) / startups.length,
+        batch_quality_score: startups.length > 0 ? startups.reduce((sum: number, s: any) => sum + s.prediction_confidence, 0) / startups.length : 0,
         market_timing_score: startups[0]?.timing_score || 0.5,
         graph_execution: {
           execution_id: executionId,
@@ -1903,15 +1980,26 @@ export default function CanvasPage() {
       console.log('[GraphPipeline] Pipeline complete!', {
         totalTime: results.total_time_ms + 'ms',
         nodesCompleted: results.nodes_completed?.length,
-        companiesAnalyzed: startups.length
+        companiesAnalyzed: startups.length,
+        topCompany: startups[0]?.startup_name,
+        topProbability: (startups[0]?.unicorn_probability * 100).toFixed(1) + '%'
       })
 
       setBatchPrediction(enhancedResult)
       setShowResults(true)
 
-    } catch (error) {
+      // Store execution ID and deliverables
+      setExecutionId(executionId)
+      if (results.deliverables) {
+        setDeliverables(results.deliverables)
+        console.log('[GraphPipeline] Deliverables loaded:', Object.keys(results.deliverables))
+      }
+
+    } catch (error: any) {
       console.error('[GraphPipeline] Analysis failed:', error)
+      // Mark running nodes as error
       setNodes(prev => prev.map(n => n.status === 'running' ? { ...n, status: 'error' } : n))
+      alert('Analysis failed: ' + (error?.message || 'Unknown error'))
     }
 
     setIsResearching(false)
@@ -2196,54 +2284,618 @@ export default function CanvasPage() {
             animate={{ x: 0, opacity: 1 }}
             exit={{ x: 400, opacity: 0 }}
             transition={{ duration: 0.25 }}
-            className="w-[380px] flex flex-col z-20 flex-shrink-0"
+            className="w-[420px] flex flex-col z-20 flex-shrink-0"
             style={{ background: colors.bgSecondary, borderLeft: `1px solid ${colors.border}` }}
           >
+            {/* Header */}
             <div
-              className="h-11 flex items-center justify-between px-4 flex-shrink-0"
+              className="h-12 flex items-center justify-between px-4 flex-shrink-0"
               style={{ borderBottom: `1px solid ${colors.border}` }}
             >
-              <h2 className="text-[13px] font-medium" style={{ color: colors.textPrimary }}>
-                {batchPrediction.batch_name}
-              </h2>
-              <button onClick={() => setShowResults(false)} className="p-1 rounded" style={{ color: colors.textMuted }}>
-                <X size={14} />
+              <div className="flex items-center gap-3">
+                <div className="w-8 h-8 rounded-lg flex items-center justify-center" style={{ background: colors.unicornMuted }}>
+                  <Sparkles size={16} style={{ color: colors.unicorn }} />
+                </div>
+                <div>
+                  <h2 className="text-[14px] font-semibold" style={{ color: colors.textPrimary }}>
+                    {batchPrediction.batch_name} Analysis
+                  </h2>
+                  <p className="text-[11px]" style={{ color: colors.textMuted }}>
+                    {batchPrediction.batch_size} companies analyzed
+                  </p>
+                </div>
+              </div>
+              <button onClick={() => setShowResults(false)} className="p-1.5 rounded-lg hover:bg-white/5 transition-colors" style={{ color: colors.textMuted }}>
+                <X size={16} />
               </button>
             </div>
 
-            <div className="flex-1 overflow-auto p-4 space-y-4">
-              {/* Stats */}
+            <div className="flex-1 overflow-auto p-4 space-y-5">
+              {/* Executive Summary Stats */}
               <div className="grid grid-cols-2 gap-3">
-                <div className="p-3 rounded-lg" style={{ background: colors.bgTertiary, border: `1px solid ${colors.border}` }}>
+                <div className="p-4 rounded-xl" style={{ background: `linear-gradient(135deg, ${colors.unicornMuted} 0%, transparent 100%)`, border: `1px solid ${colors.unicorn}30` }}>
                   <div className="flex items-center gap-2 mb-2">
-                    <Award size={11} style={{ color: colors.unicorn }} />
-                    <span className="text-[10px] font-medium uppercase" style={{ color: colors.textMuted }}>Unicorns</span>
+                    <Award size={14} style={{ color: colors.unicorn }} />
+                    <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: colors.unicorn }}>Expected Unicorns</span>
                   </div>
-                  <p className="text-xl font-semibold" style={{ color: colors.unicorn }}>
-                    {batchPrediction.expected_unicorns.toFixed(1)}
+                  <p className="text-2xl font-bold" style={{ color: colors.unicorn }}>
+                    {batchPrediction.expected_unicorns.toFixed(2)}
+                  </p>
+                  <p className="text-[10px] mt-1" style={{ color: colors.textMuted }}>
+                    of {batchPrediction.batch_size} companies
                   </p>
                 </div>
-                <div className="p-3 rounded-lg" style={{ background: colors.bgTertiary, border: `1px solid ${colors.border}` }}>
+                <div className="p-4 rounded-xl" style={{ background: `linear-gradient(135deg, ${colors.successMuted} 0%, transparent 100%)`, border: `1px solid ${colors.success}30` }}>
                   <div className="flex items-center gap-2 mb-2">
-                    <DollarSign size={11} style={{ color: colors.success }} />
-                    <span className="text-[10px] font-medium uppercase" style={{ color: colors.textMuted }}>Value</span>
+                    <DollarSign size={14} style={{ color: colors.success }} />
+                    <span className="text-[11px] font-medium uppercase tracking-wide" style={{ color: colors.success }}>Total Value</span>
                   </div>
-                  <p className="text-xl font-semibold" style={{ color: colors.success }}>
-                    ${batchPrediction.expected_total_value.toFixed(1)}B
+                  <p className="text-2xl font-bold" style={{ color: colors.success }}>
+                    ${batchPrediction.expected_total_value.toFixed(2)}B
+                  </p>
+                  <p className="text-[10px] mt-1" style={{ color: colors.textMuted }}>
+                    expected portfolio value
                   </p>
                 </div>
               </div>
 
-              {/* Companies */}
+              {/* Pipeline Stats */}
+              {batchPrediction.graph_execution && (
+                <div className="p-3 rounded-lg flex items-center justify-between" style={{ background: colors.bgTertiary, border: `1px solid ${colors.border}` }}>
+                  <div className="flex items-center gap-2">
+                    <Activity size={12} style={{ color: colors.accent }} />
+                    <span className="text-[11px]" style={{ color: colors.textSecondary }}>Pipeline completed</span>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <span className="text-[11px] font-medium" style={{ color: colors.textPrimary }}>
+                      {batchPrediction.graph_execution.nodes_completed?.length || 16} nodes
+                    </span>
+                    <span className="text-[11px]" style={{ color: colors.textMuted }}>
+                      {((batchPrediction.graph_execution.total_time_ms || 0) / 1000).toFixed(1)}s
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Top Candidates */}
               <div>
-                <h3 className="text-[10px] font-medium uppercase mb-3" style={{ color: colors.textMuted }}>
-                  Top Candidates
-                </h3>
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wide" style={{ color: colors.textMuted }}>
+                    Top Unicorn Candidates
+                  </h3>
+                  <span className="text-[10px] px-2 py-0.5 rounded-full" style={{ background: colors.accentMuted, color: colors.accent }}>
+                    Ranked by probability
+                  </span>
+                </div>
                 <div className="space-y-2">
                   {batchPrediction.startups.slice(0, 5).map((p) => (
                     <PredictionCard key={p.startup_id} prediction={p} onClick={() => openStartupChat(p)} />
                   ))}
                 </div>
+              </div>
+
+              {/* Enterprise Deliverables Button */}
+              {deliverables && (
+                <div className="pt-2">
+                  <button
+                    onClick={() => {
+                      setShowDeliverables(true)
+                      setShowResults(false)
+                    }}
+                    className="w-full py-3 px-4 rounded-xl flex items-center justify-between group transition-all duration-200"
+                    style={{
+                      background: `linear-gradient(135deg, ${colors.accent}15 0%, ${colors.unicorn}15 100%)`,
+                      border: `1px solid ${colors.accent}40`
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="w-10 h-10 rounded-lg flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${colors.accent} 0%, ${colors.unicorn} 100%)` }}>
+                        <FileBarChart size={18} className="text-white" />
+                      </div>
+                      <div className="text-left">
+                        <p className="text-[13px] font-semibold" style={{ color: colors.textPrimary }}>
+                          Enterprise Deliverables
+                        </p>
+                        <p className="text-[11px]" style={{ color: colors.textMuted }}>
+                          Investment Memos, Risk Registers, Decision Matrix
+                        </p>
+                      </div>
+                    </div>
+                    <ChevronRight size={16} style={{ color: colors.accent }} className="group-hover:translate-x-1 transition-transform" />
+                  </button>
+                </div>
+              )}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Enterprise Deliverables Panel */}
+      <AnimatePresence>
+        {showDeliverables && deliverables && (
+          <motion.div
+            initial={{ x: 500, opacity: 0 }}
+            animate={{ x: 0, opacity: 1 }}
+            exit={{ x: 500, opacity: 0 }}
+            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+            className="w-[520px] flex flex-col z-20 flex-shrink-0"
+            style={{ background: colors.bgSecondary, borderLeft: `1px solid ${colors.border}` }}
+          >
+            {/* Header */}
+            <div
+              className="h-14 flex items-center justify-between px-4 flex-shrink-0"
+              style={{ borderBottom: `1px solid ${colors.border}`, background: `linear-gradient(135deg, ${colors.accent}08 0%, transparent 100%)` }}
+            >
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg flex items-center justify-center" style={{ background: `linear-gradient(135deg, ${colors.accent} 0%, ${colors.unicorn} 100%)` }}>
+                  <FileBarChart size={18} className="text-white" />
+                </div>
+                <div>
+                  <h2 className="text-[14px] font-bold" style={{ color: colors.textPrimary }}>
+                    Enterprise Deliverables
+                  </h2>
+                  <p className="text-[10px] uppercase tracking-wider" style={{ color: colors.textMuted }}>
+                    Board-Ready Documents
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    setShowDeliverables(false)
+                    setShowResults(true)
+                  }}
+                  className="p-2 rounded-lg hover:bg-white/5 transition-colors"
+                  style={{ color: colors.textMuted }}
+                >
+                  <X size={16} />
+                </button>
+              </div>
+            </div>
+
+            {/* Deliverable Type Tabs */}
+            <div className="px-4 py-3 flex gap-2 overflow-x-auto" style={{ borderBottom: `1px solid ${colors.border}` }}>
+              {[
+                { id: 'decision_matrix', label: 'Decision Matrix', icon: Scale },
+                { id: 'investment_memo', label: 'Investment Memo', icon: FileBarChart },
+                { id: 'risk_register', label: 'Risk Register', icon: Shield },
+                { id: 'executive_brief', label: 'Executive Brief', icon: FileText },
+              ].map((tab) => (
+                <button
+                  key={tab.id}
+                  onClick={() => setSelectedDeliverableType(tab.id as any)}
+                  className="px-3 py-2 rounded-lg text-[12px] font-medium flex items-center gap-2 transition-all whitespace-nowrap"
+                  style={{
+                    background: selectedDeliverableType === tab.id ? colors.accent : colors.bgTertiary,
+                    color: selectedDeliverableType === tab.id ? 'white' : colors.textSecondary,
+                    border: `1px solid ${selectedDeliverableType === tab.id ? colors.accent : colors.border}`
+                  }}
+                >
+                  <tab.icon size={13} />
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+
+            {/* Company Selector for per-company deliverables */}
+            {(selectedDeliverableType === 'investment_memo' || selectedDeliverableType === 'risk_register' || selectedDeliverableType === 'executive_brief') && (
+              <div className="px-4 py-3" style={{ borderBottom: `1px solid ${colors.border}` }}>
+                <select
+                  value={selectedCompanyForDeliverable || ''}
+                  onChange={(e) => setSelectedCompanyForDeliverable(e.target.value)}
+                  className="w-full px-3 py-2 rounded-lg text-[13px] appearance-none cursor-pointer"
+                  style={{ background: colors.bgTertiary, color: colors.textPrimary, border: `1px solid ${colors.border}` }}
+                >
+                  <option value="">Select a company...</option>
+                  {batchPrediction?.startups.map((s) => (
+                    <option key={s.startup_id} value={s.startup_name}>{s.startup_name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
+            {/* Deliverable Content */}
+            <div className="flex-1 overflow-auto p-4">
+              {/* Decision Matrix View */}
+              {selectedDeliverableType === 'decision_matrix' && deliverables.decision_matrix && (
+                <div className="space-y-4">
+                  <div className="p-4 rounded-xl" style={{ background: `linear-gradient(135deg, ${colors.accent}10 0%, transparent 100%)`, border: `1px solid ${colors.accent}30` }}>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Scale size={16} style={{ color: colors.accent }} />
+                      <h3 className="text-[14px] font-bold" style={{ color: colors.textPrimary }}>
+                        {deliverables.decision_matrix.title || 'Investment Decision Matrix'}
+                      </h3>
+                    </div>
+                    <p className="text-[12px]" style={{ color: colors.textSecondary }}>
+                      {deliverables.decision_matrix.decision_context}
+                    </p>
+                  </div>
+
+                  {/* Recommended Company */}
+                  {deliverables.decision_matrix.recommended_company && (
+                    <div className="p-4 rounded-xl" style={{ background: colors.successMuted, border: `1px solid ${colors.success}40` }}>
+                      <div className="flex items-center gap-2 mb-2">
+                        <Award size={16} style={{ color: colors.success }} />
+                        <span className="text-[10px] font-bold uppercase tracking-wider" style={{ color: colors.success }}>
+                          TOP RECOMMENDATION
+                        </span>
+                      </div>
+                      <p className="text-[18px] font-bold" style={{ color: colors.textPrimary }}>
+                        {deliverables.decision_matrix.recommended_company}
+                      </p>
+                      <p className="text-[12px] mt-2" style={{ color: colors.textSecondary }}>
+                        {deliverables.decision_matrix.recommendation_rationale}
+                      </p>
+                      <div className="mt-3 flex items-center gap-2">
+                        <span className="text-[11px] px-2 py-1 rounded-full font-medium" style={{ background: `${colors.success}20`, color: colors.success }}>
+                          {(deliverables.decision_matrix.confidence_level * 100).toFixed(0)}% Confidence
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Company Comparison Table */}
+                  {deliverables.decision_matrix.companies && (
+                    <div>
+                      <h4 className="text-[11px] font-bold uppercase tracking-wider mb-3" style={{ color: colors.textMuted }}>
+                        Side-by-Side Comparison
+                      </h4>
+                      <div className="space-y-2">
+                        {deliverables.decision_matrix.companies.map((company: any, idx: number) => (
+                          <div
+                            key={company.name}
+                            className="p-3 rounded-lg flex items-center justify-between"
+                            style={{
+                              background: idx === 0 ? `${colors.unicorn}10` : colors.bgTertiary,
+                              border: `1px solid ${idx === 0 ? colors.unicorn : colors.border}40`
+                            }}
+                          >
+                            <div className="flex items-center gap-3">
+                              <span className="text-[14px] font-bold w-6 h-6 rounded-full flex items-center justify-center"
+                                style={{ background: colors.bgElevated, color: idx === 0 ? colors.unicorn : colors.textMuted }}>
+                                {idx + 1}
+                              </span>
+                              <div>
+                                <p className="text-[13px] font-semibold" style={{ color: colors.textPrimary }}>{company.name}</p>
+                                <p className="text-[10px]" style={{ color: colors.textMuted }}>
+                                  {company.recommendation.replace('_', ' ')}
+                                </p>
+                              </div>
+                            </div>
+                            <div className="text-right">
+                              <p className="text-[14px] font-bold" style={{ color: colors.unicorn }}>
+                                {(company.unicorn_probability * 100).toFixed(1)}%
+                              </p>
+                              <p className="text-[10px]" style={{ color: colors.textMuted }}>Unicorn Prob</p>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Investment Memo View */}
+              {selectedDeliverableType === 'investment_memo' && selectedCompanyForDeliverable && deliverables.investment_memos?.[selectedCompanyForDeliverable] && (
+                <div className="space-y-4">
+                  {(() => {
+                    const memo = deliverables.investment_memos[selectedCompanyForDeliverable]
+                    return (
+                      <>
+                        {/* Header */}
+                        <div className="p-4 rounded-xl" style={{ background: `linear-gradient(135deg, ${colors.accent}10 0%, ${colors.unicorn}10 100%)`, border: `1px solid ${colors.accent}30` }}>
+                          <div className="flex items-center justify-between mb-3">
+                            <div>
+                              <p className="text-[10px] uppercase tracking-wider font-bold" style={{ color: colors.textMuted }}>
+                                Investment Memorandum
+                              </p>
+                              <h3 className="text-[18px] font-bold" style={{ color: colors.textPrimary }}>
+                                {memo.company_name}
+                              </h3>
+                            </div>
+                            <span className={`px-3 py-1.5 rounded-lg text-[11px] font-bold uppercase ${
+                              memo.recommendation === 'STRONG_YES' ? 'bg-green-500/20 text-green-400' :
+                              memo.recommendation === 'YES' ? 'bg-green-400/20 text-green-300' :
+                              memo.recommendation === 'CONDITIONAL' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-red-500/20 text-red-400'
+                            }`}>
+                              {memo.recommendation.replace('_', ' ')}
+                            </span>
+                          </div>
+                          <p className="text-[12px]" style={{ color: colors.textSecondary }}>
+                            {memo.recommendation_summary}
+                          </p>
+                        </div>
+
+                        {/* Investment Thesis */}
+                        {memo.thesis && (
+                          <div className="p-4 rounded-lg" style={{ background: colors.bgTertiary, border: `1px solid ${colors.border}` }}>
+                            <h4 className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: colors.textMuted }}>
+                              Investment Thesis
+                            </h4>
+                            <p className="text-[13px] font-semibold mb-3" style={{ color: colors.textPrimary }}>
+                              {memo.thesis.headline}
+                            </p>
+                            <ul className="space-y-1">
+                              {memo.thesis.rationale.map((r: string, i: number) => (
+                                <li key={i} className="text-[12px] flex items-start gap-2" style={{ color: colors.textSecondary }}>
+                                  <CheckCircle size={12} className="mt-0.5 flex-shrink-0" style={{ color: colors.success }} />
+                                  {r}
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {/* Deal Terms */}
+                        {memo.deal && (
+                          <div className="p-4 rounded-lg" style={{ background: colors.bgTertiary, border: `1px solid ${colors.border}` }}>
+                            <h4 className="text-[11px] font-bold uppercase tracking-wider mb-3" style={{ color: colors.textMuted }}>
+                              Deal Terms
+                            </h4>
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <p className="text-[10px]" style={{ color: colors.textMuted }}>Investment</p>
+                                <p className="text-[14px] font-bold" style={{ color: colors.success }}>
+                                  ${(memo.deal.investment_amount / 1000000).toFixed(1)}M
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-[10px]" style={{ color: colors.textMuted }}>Pre-Money</p>
+                                <p className="text-[14px] font-bold" style={{ color: colors.textPrimary }}>
+                                  ${(memo.deal.pre_money_valuation / 1000000).toFixed(0)}M
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-[10px]" style={{ color: colors.textMuted }}>Ownership</p>
+                                <p className="text-[14px] font-bold" style={{ color: colors.unicorn }}>
+                                  {memo.deal.ownership_percentage.toFixed(2)}%
+                                </p>
+                              </div>
+                              <div>
+                                <p className="text-[10px]" style={{ color: colors.textMuted }}>Instrument</p>
+                                <p className="text-[14px] font-bold" style={{ color: colors.textPrimary }}>
+                                  {memo.deal.instrument}
+                                </p>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Top Risks */}
+                        {memo.top_risks && (
+                          <div className="p-4 rounded-lg" style={{ background: `${colors.error}10`, border: `1px solid ${colors.error}30` }}>
+                            <h4 className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: colors.error }}>
+                              Key Risks
+                            </h4>
+                            <div className="space-y-2">
+                              {memo.top_risks.map((risk: any, i: number) => (
+                                <div key={i} className="flex items-start justify-between gap-2">
+                                  <span className="text-[12px]" style={{ color: colors.textSecondary }}>{risk.risk}</span>
+                                  <span className={`text-[10px] px-2 py-0.5 rounded font-medium ${
+                                    risk.severity === 'HIGH' ? 'bg-red-500/20 text-red-400' :
+                                    risk.severity === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
+                                    'bg-green-500/20 text-green-400'
+                                  }`}>{risk.severity}</span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
+                </div>
+              )}
+
+              {/* Risk Register View */}
+              {selectedDeliverableType === 'risk_register' && selectedCompanyForDeliverable && deliverables.risk_registers?.[selectedCompanyForDeliverable] && (
+                <div className="space-y-4">
+                  {(() => {
+                    const register = deliverables.risk_registers[selectedCompanyForDeliverable]
+                    return (
+                      <>
+                        {/* Header */}
+                        <div className="p-4 rounded-xl" style={{ background: `${colors.error}10`, border: `1px solid ${colors.error}30` }}>
+                          <div className="flex items-center justify-between mb-2">
+                            <div className="flex items-center gap-2">
+                              <Shield size={16} style={{ color: colors.error }} />
+                              <h3 className="text-[14px] font-bold" style={{ color: colors.textPrimary }}>
+                                Risk Register - {register.company_name}
+                              </h3>
+                            </div>
+                            <span className={`px-3 py-1 rounded-lg text-[11px] font-bold uppercase ${
+                              register.overall_risk_rating === 'CRITICAL' ? 'bg-red-600/20 text-red-400' :
+                              register.overall_risk_rating === 'HIGH' ? 'bg-red-500/20 text-red-400' :
+                              register.overall_risk_rating === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-green-500/20 text-green-400'
+                            }`}>
+                              {register.overall_risk_rating} RISK
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-4 mt-3">
+                            <div>
+                              <p className="text-[10px]" style={{ color: colors.textMuted }}>Risk Score</p>
+                              <p className="text-[18px] font-bold" style={{ color: colors.error }}>{register.risk_score}/100</p>
+                            </div>
+                            <div>
+                              <p className="text-[10px]" style={{ color: colors.textMuted }}>Trend</p>
+                              <p className="text-[14px] font-semibold" style={{ color: colors.textPrimary }}>{register.risk_trend}</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Risk Summary */}
+                        <div className="grid grid-cols-4 gap-2">
+                          {[
+                            { label: 'Critical', count: register.critical_risks, color: '#EF4444' },
+                            { label: 'High', count: register.high_risks, color: '#F97316' },
+                            { label: 'Medium', count: register.medium_risks, color: '#EAB308' },
+                            { label: 'Low', count: register.low_risks, color: '#22C55E' },
+                          ].map((item) => (
+                            <div key={item.label} className="p-3 rounded-lg text-center" style={{ background: colors.bgTertiary }}>
+                              <p className="text-[20px] font-bold" style={{ color: item.color }}>{item.count}</p>
+                              <p className="text-[10px]" style={{ color: colors.textMuted }}>{item.label}</p>
+                            </div>
+                          ))}
+                        </div>
+
+                        {/* Risks List */}
+                        <div>
+                          <h4 className="text-[11px] font-bold uppercase tracking-wider mb-3" style={{ color: colors.textMuted }}>
+                            Identified Risks
+                          </h4>
+                          <div className="space-y-2">
+                            {register.risks?.map((risk: any) => (
+                              <div key={risk.id} className="p-3 rounded-lg" style={{ background: colors.bgTertiary, border: `1px solid ${colors.border}` }}>
+                                <div className="flex items-start justify-between gap-2 mb-2">
+                                  <p className="text-[12px] font-semibold" style={{ color: colors.textPrimary }}>{risk.title}</p>
+                                  <span className={`text-[9px] px-2 py-0.5 rounded font-bold ${
+                                    risk.severity === 'CRITICAL' ? 'bg-red-600/20 text-red-400' :
+                                    risk.severity === 'HIGH' ? 'bg-red-500/20 text-red-400' :
+                                    risk.severity === 'MEDIUM' ? 'bg-yellow-500/20 text-yellow-400' :
+                                    'bg-green-500/20 text-green-400'
+                                  }`}>{risk.severity}</span>
+                                </div>
+                                <p className="text-[11px] mb-2" style={{ color: colors.textSecondary }}>{risk.description}</p>
+                                <div className="flex items-center gap-3 text-[10px]" style={{ color: colors.textMuted }}>
+                                  <span>Likelihood: {(risk.likelihood * 100).toFixed(0)}%</span>
+                                  <span>Impact: {(risk.impact_score * 100).toFixed(0)}%</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )
+                  })()}
+                </div>
+              )}
+
+              {/* Executive Brief View */}
+              {selectedDeliverableType === 'executive_brief' && selectedCompanyForDeliverable && deliverables.executive_briefs?.[selectedCompanyForDeliverable] && (
+                <div className="space-y-4">
+                  {(() => {
+                    const brief = deliverables.executive_briefs[selectedCompanyForDeliverable]
+                    return (
+                      <>
+                        {/* Header */}
+                        <div className="p-4 rounded-xl text-center" style={{ background: `linear-gradient(135deg, ${colors.bgTertiary} 0%, ${colors.bgElevated} 100%)`, border: `1px solid ${colors.border}` }}>
+                          <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: colors.textMuted }}>
+                            Executive Decision Brief
+                          </p>
+                          <h3 className="text-[18px] font-bold mb-1" style={{ color: colors.textPrimary }}>
+                            {brief.title}
+                          </h3>
+                          <p className="text-[11px]" style={{ color: colors.textMuted }}>
+                            Prepared for: {brief.prepared_for}
+                          </p>
+                        </div>
+
+                        {/* The Ask */}
+                        <div className="p-4 rounded-lg" style={{ background: `${colors.accent}10`, border: `1px solid ${colors.accent}30` }}>
+                          <p className="text-[10px] uppercase tracking-wider mb-1" style={{ color: colors.accent }}>
+                            Decision Required
+                          </p>
+                          <p className="text-[13px] font-semibold" style={{ color: colors.textPrimary }}>
+                            {brief.decision_required}
+                          </p>
+                          <p className="text-[11px] mt-1" style={{ color: colors.textMuted }}>
+                            Deadline: {brief.deadline}
+                          </p>
+                        </div>
+
+                        {/* Recommendation */}
+                        <div className="p-4 rounded-lg" style={{ background: colors.bgTertiary }}>
+                          <div className="flex items-center justify-between mb-2">
+                            <p className="text-[10px] uppercase tracking-wider" style={{ color: colors.textMuted }}>
+                              Recommendation
+                            </p>
+                            <span className={`px-3 py-1 rounded-lg text-[11px] font-bold uppercase ${
+                              brief.recommendation === 'STRONG_YES' ? 'bg-green-500/20 text-green-400' :
+                              brief.recommendation === 'YES' ? 'bg-green-400/20 text-green-300' :
+                              brief.recommendation === 'CONDITIONAL' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-red-500/20 text-red-400'
+                            }`}>
+                              {brief.recommendation.replace('_', ' ')}
+                            </span>
+                          </div>
+                          <p className="text-[13px]" style={{ color: colors.textSecondary }}>
+                            {brief.recommendation_text}
+                          </p>
+                          <div className="mt-2">
+                            <span className="text-[10px] px-2 py-1 rounded-full" style={{ background: colors.accentMuted, color: colors.accent }}>
+                              {(brief.confidence * 100).toFixed(0)}% Confidence
+                            </span>
+                          </div>
+                        </div>
+
+                        {/* Key Points */}
+                        <div>
+                          <h4 className="text-[11px] font-bold uppercase tracking-wider mb-2" style={{ color: colors.textMuted }}>
+                            Key Points
+                          </h4>
+                          <ul className="space-y-1.5">
+                            {brief.key_points?.map((point: string, i: number) => (
+                              <li key={i} className="flex items-start gap-2 text-[12px]" style={{ color: colors.textSecondary }}>
+                                <span className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold flex-shrink-0"
+                                  style={{ background: colors.accentMuted, color: colors.accent }}>
+                                  {i + 1}
+                                </span>
+                                {point}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+
+                        {/* Key Metrics */}
+                        {brief.key_metrics && (
+                          <div className="grid grid-cols-2 gap-2">
+                            {Object.entries(brief.key_metrics).map(([key, value]) => (
+                              <div key={key} className="p-3 rounded-lg" style={{ background: colors.bgTertiary }}>
+                                <p className="text-[10px]" style={{ color: colors.textMuted }}>{key}</p>
+                                <p className="text-[14px] font-bold" style={{ color: colors.textPrimary }}>{value as string}</p>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </>
+                    )
+                  })()}
+                </div>
+              )}
+
+              {/* No Selection State */}
+              {(selectedDeliverableType === 'investment_memo' || selectedDeliverableType === 'risk_register' || selectedDeliverableType === 'executive_brief') && !selectedCompanyForDeliverable && (
+                <div className="flex flex-col items-center justify-center py-12 text-center">
+                  <FileBarChart size={32} style={{ color: colors.textMuted }} className="mb-3" />
+                  <p className="text-[13px] font-medium" style={{ color: colors.textSecondary }}>
+                    Select a company above
+                  </p>
+                  <p className="text-[11px]" style={{ color: colors.textMuted }}>
+                    to view {selectedDeliverableType.replace('_', ' ')}
+                  </p>
+                </div>
+              )}
+            </div>
+
+            {/* Footer with Export */}
+            <div className="p-4 flex items-center justify-between" style={{ borderTop: `1px solid ${colors.border}` }}>
+              <p className="text-[10px]" style={{ color: colors.textMuted }}>
+                Generated {deliverables.generated_at ? new Date(deliverables.generated_at).toLocaleDateString() : 'Today'}
+              </p>
+              <div className="flex items-center gap-2">
+                <button className="px-3 py-1.5 rounded-lg text-[11px] font-medium flex items-center gap-2"
+                  style={{ background: colors.bgTertiary, color: colors.textSecondary, border: `1px solid ${colors.border}` }}>
+                  <Copy size={12} />
+                  Copy
+                </button>
+                <button className="px-3 py-1.5 rounded-lg text-[11px] font-medium flex items-center gap-2"
+                  style={{ background: colors.accent, color: 'white' }}>
+                  <Download size={12} />
+                  Export PDF
+                </button>
               </div>
             </div>
           </motion.div>
