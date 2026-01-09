@@ -390,30 +390,69 @@ export default function CanvasPage() {
   // Sidebar
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
 
-  // Pan/Zoom handlers
+  // Track space key for pan mode
+  const [spaceHeld, setSpaceHeld] = useState(false)
+
+  // Space key detection for Figma-style space+drag panning
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.code === 'Space' && !e.repeat) {
+        e.preventDefault()
+        setSpaceHeld(true)
+      }
+    }
+    const handleKeyUp = (e: KeyboardEvent) => {
+      if (e.code === 'Space') {
+        setSpaceHeld(false)
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    window.addEventListener('keyup', handleKeyUp)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+      window.removeEventListener('keyup', handleKeyUp)
+    }
+  }, [])
+
+  // Figma-style scroll: normal scroll = pan, Cmd/Ctrl+scroll = zoom
   const handleWheel = useCallback((e: React.WheelEvent) => {
     e.preventDefault()
-    const delta = e.deltaY > 0 ? 0.9 : 1.1
-    const newScale = Math.min(Math.max(transform.scale * delta, 0.25), 2)
-    const rect = canvasRef.current?.getBoundingClientRect()
-    if (rect) {
-      const x = e.clientX - rect.left
-      const y = e.clientY - rect.top
-      const newX = x - (x - transform.x) * (newScale / transform.scale)
-      const newY = y - (y - transform.y) * (newScale / transform.scale)
-      setTransform({ x: newX, y: newY, scale: newScale })
+
+    // Cmd/Ctrl + scroll = zoom (like Figma)
+    if (e.metaKey || e.ctrlKey) {
+      const delta = e.deltaY > 0 ? 0.9 : 1.1
+      const newScale = Math.min(Math.max(transform.scale * delta, 0.25), 2)
+      const rect = canvasRef.current?.getBoundingClientRect()
+      if (rect) {
+        const x = e.clientX - rect.left
+        const y = e.clientY - rect.top
+        const newX = x - (x - transform.x) * (newScale / transform.scale)
+        const newY = y - (y - transform.y) * (newScale / transform.scale)
+        setTransform({ x: newX, y: newY, scale: newScale })
+      }
+    } else {
+      // Normal scroll = pan (like Figma)
+      // Shift + scroll = horizontal pan
+      const dx = e.shiftKey ? -e.deltaY : -e.deltaX
+      const dy = e.shiftKey ? 0 : -e.deltaY
+      setTransform(prev => ({
+        ...prev,
+        x: prev.x + dx,
+        y: prev.y + dy
+      }))
     }
   }, [transform])
 
   const handleCanvasMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.button === 1 || (e.button === 0 && e.altKey)) {
+    // Middle mouse, space+click, or alt+click = start panning
+    if (e.button === 1 || (e.button === 0 && spaceHeld) || (e.button === 0 && e.altKey)) {
       e.preventDefault()
       setIsPanning(true)
       panStart.current = { x: e.clientX, y: e.clientY, transformX: transform.x, transformY: transform.y }
     } else if (e.button === 0 && e.target === e.currentTarget) {
       setSelectedNode(null)
     }
-  }, [transform])
+  }, [transform, spaceHeld])
 
   useEffect(() => {
     if (!isPanning) return
@@ -602,7 +641,7 @@ export default function CanvasPage() {
           ref={canvasRef}
           className="flex-1 relative overflow-hidden"
           style={{
-            cursor: isPanning ? 'grabbing' : 'default',
+            cursor: isPanning ? 'grabbing' : spaceHeld ? 'grab' : 'default',
             backgroundImage: `radial-gradient(${colors.border} 1px, transparent 1px)`,
             backgroundSize: `${24 * transform.scale}px ${24 * transform.scale}px`,
             backgroundPosition: `${transform.x}px ${transform.y}px`,
@@ -626,7 +665,7 @@ export default function CanvasPage() {
           </div>
 
           <div className="absolute bottom-4 left-4 px-3 py-2 rounded-lg text-xs" style={{ background: colors.bgSecondary, color: colors.textMuted, border: `1px solid ${colors.border}` }}>
-            Scroll to zoom | Alt+drag to pan | Click "Analyze" to research YC batch
+            Scroll to pan | ⌘/Ctrl+scroll to zoom | Space+drag to pan
           </div>
         </div>
       </div>
