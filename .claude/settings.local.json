@@ -39,7 +39,12 @@
       "Bash(pip3 install:*)",
       "Bash(railway login:*)",
       "Bash(export RAILWAY_TOKEN=\"5d0a0621-f0fd-40b5-acd0-dee56879275c\")",
-      "Bash(railway whoami:*)"
+      "Bash(railway whoami:*)",
+      "Bash(RAILWAY_TOKEN=\"5d0a0621-f0fd-40b5-acd0-dee56879275c\" railway status:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(PROJECT_ID=\"ce9e0e3e-7f83-41b4-bb48-b32b7cea519e\":*)",
+      "Bash(ENV_ID=\"48e9eab4-acc1-48f7-ad59-401eb3bd686e\":*)",
+      "Bash(DEPLOYMENT_ID=\"7eee1ad5-6e05-4e71-bfb3-cf87d6ccb495\")"
     ]
   }
 }
